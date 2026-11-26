@@ -68,8 +68,40 @@ export async function openRepository(github: Client, id: string, ref: string): P
     `${API}/repos/${id}/commits/${encodePath(ref)}`,
     `Not found in https://github.com/${id}: ${ref}`,
   );
+  return openCommit(github, id, sha);
+}
+
+/** The files that may be skills at a commit. */
+async function openCommit(github: Client, id: string, sha: string): Promise<Source> {
   const warnings: string[] = [];
-  const paths = await rootPaths(github, id, sha, warnings);
+  const top = await github.json<Tree>(`${API}/repos/${id}/git/trees/${sha}`);
+  return source(github, id, sha, await rootPaths(github, id, await rootTrees(github, id, top), warnings), warnings);
+}
+
+/**
+ * A repository on its branch, for an owner's scan: the branch's tree is asked for by name, and GitHub answers with
+ * the commit it is at, so most repositories, with no skill root, take that one request and a request for each top
+ * folder of a root (`.github`). Only one with a skill root asks for its commit too, to pin the links to it; if the
+ * branch has moved on since, or GitHub answered something else, it is opened at that commit, as a single repository is.
+ */
+export async function openBranch(github: Client, id: string, branch: string): Promise<Source> {
+  let top: Tree & { sha: string };
+  try {
+    top = await github.json<Tree & { sha: string }>(`${API}/repos/${id}/git/trees/${encodePath(branch)}`);
+  } catch (error) {
+    // An empty repository, or a branch whose tree is not found by name: as a single one, for its own answer.
+    if (error instanceof GitHubError && (error.status === 404 || error.status === 409)) return openRepository(github, id, branch);
+    throw error;
+  }
+  const roots = await rootTrees(github, id, top);
+  if (roots.length === 0) return source(github, id, top.sha, [], []);
+  const { sha } = await github.json<{ sha: string }>(`${API}/repos/${id}/commits/${encodePath(branch)}`, `Not found in https://github.com/${id}: ${branch}`);
+  if (sha !== top.sha) return openCommit(github, id, sha);
+  const warnings: string[] = [];
+  return source(github, id, sha, await rootPaths(github, id, roots, warnings), warnings);
+}
+
+function source(github: Client, id: string, sha: string, paths: string[], warnings: string[]): Source {
   const [organization, repo] = id.split('/');
   return {
     repository: { id, organization, name: repo, url: `https://github.com/${id}`, commit: sha },
@@ -81,17 +113,21 @@ export async function openRepository(github: Client, id: string, ref: string): P
 
 type Tree = { truncated: boolean; tree: { path: string; mode: string; type: string; sha: string }[] };
 
+/** The skill roots that are there, each with its tree: found from the top of the tree, down one level at a time. */
+async function rootTrees(github: Client, id: string, top: Tree): Promise<{ root: string; sha: string }[]> {
+  const found = await Promise.all(SKILL_ROOTS.map(async (root) => ({ root, sha: await directory(github, id, top, root) })));
+  return found.flatMap(({ root, sha }) => (sha ? [{ root, sha }] : []));
+}
+
 /**
  * Only the skill roots count, so only they are listed: a few requests, whatever the repository's
  * size, at any commit. Code search would miss repositories it has not indexed, such as large
  * monorepos, and answer "nothing" without an error; the whole tree is cut off for large ones.
  */
-async function rootPaths(github: Client, id: string, sha: string, warnings: string[]): Promise<string[]> {
+async function rootPaths(github: Client, id: string, roots: { root: string; sha: string }[], warnings: string[]): Promise<string[]> {
   const listed = await Promise.all(
-    SKILL_ROOTS.map(async (root) => {
-      const rootSha = await directory(github, id, sha, root);
-      if (!rootSha) return [];
-      const subtree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${rootSha}?recursive=1`);
+    roots.map(async ({ root, sha }) => {
+      const subtree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${sha}?recursive=1`);
       if (subtree.truncated) warnings.push(`${root} has too many files to list at once; some of its skills may be missing`);
       return files(subtree).map((path) => `${root}/${path}`);
     }),
@@ -99,11 +135,12 @@ async function rootPaths(github: Client, id: string, sha: string, warnings: stri
   return listed.flat();
 }
 
-/** Walks down one level at a time; the directory's tree, or undefined if it does not exist. */
-async function directory(github: Client, id: string, sha: string, path: string): Promise<string | undefined> {
-  let current = sha;
+/** Walks down from the top of the tree one level at a time; the directory's tree, or undefined if it does not exist. */
+async function directory(github: Client, id: string, top: Tree, path: string): Promise<string | undefined> {
+  let tree = top;
+  let current: string | undefined;
   for (const segment of path.split('/')) {
-    const tree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${current}`);
+    if (current) tree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${current}`);
     const entry = tree.tree.find((item) => item.path === segment && item.type === 'tree');
     if (!entry) return undefined;
     current = entry.sha;
@@ -126,7 +163,8 @@ export type Client = ReturnType<typeof client>;
 export function client({ fetch, token, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), paused: onPause }: GitHubOptions) {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const answers = new Map<string, Promise<unknown>>(); // the root tree is asked for once per skill root
+  const answers = new Map<string, Promise<unknown>>(); // a tree asked for twice is answered once
+  const links = new Map<string, string>(); // the pages there are, for a listing
   let paused: Promise<void> = Promise.resolve();
   let pausedUntil = 0;
 
@@ -150,7 +188,11 @@ export function client({ fetch, token, wait = (ms) => new Promise((resolve) => s
 
   async function request(url: string, notFound: string, tries = 1): Promise<unknown> {
     const response = await get(url, { headers });
-    if (response.ok) return response.json();
+    if (response.ok) {
+      const link = response.headers.get('link');
+      if (link) links.set(url, link);
+      return response.json();
+    }
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
@@ -185,6 +227,10 @@ export function client({ fetch, token, wait = (ms) => new Promise((resolve) => s
     /** A GitHub API answer asked for again each time, such as the rate limit left. */
     fresh<T>(url: string): Promise<T> {
       return request(url, `Not found on GitHub: ${url}`) as Promise<T>;
+    },
+    /** The `Link` header of an answer already received: the next and last pages of a listing. */
+    link(url: string): string | undefined {
+      return links.get(url);
     },
     token,
     /** A file's bytes at the scanned commit, or undefined if it is not there. */

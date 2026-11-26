@@ -71,16 +71,18 @@ export async function atlas(args: string[], github: GitHubOptions = { fetch: rep
   return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
 }
 
-/** A recorded repository: its files at `commit`, on `branch`. Only the skill roots are answered, as GitHub would be asked. */
+/**
+ * A recorded repository: its files at `commit`, on `branch`. Only the skill roots are answered, as GitHub would be asked:
+ * the top of the tree by the commit, or by the branch's name, when GitHub answers with the commit too.
+ */
 export function recordRepository(id: string, files: Record<string, string>, { commit = 'c0ffee', branch = 'main', truncated = false } = {}): Recording {
   const api = `https://api.github.com/repos/${id}`;
   const recording: Recording = { [`${api}/commits/${branch}`]: { status: 200, body: { sha: commit } } };
   const tops = new Set(Object.keys(files).map((path) => path.split('/')[0]));
   const dir = (path: string, sha: string) => ({ path, mode: '040000', type: 'tree', sha });
-  recording[`${api}/git/trees/${commit}`] = {
-    status: 200,
-    body: { truncated: false, tree: [...tops].map((top) => dir(top, `${commit}-${top}`)).concat([{ path: 'README.md', mode: '100644', type: 'blob', sha: 'readme' }]) },
-  };
+  const top = { truncated: false, tree: [...tops].map((top) => dir(top, `${commit}-${top}`)).concat([{ path: 'README.md', mode: '100644', type: 'blob', sha: 'readme' }]) };
+  recording[`${api}/git/trees/${commit}`] = { status: 200, body: top };
+  recording[`${api}/git/trees/${branch}`] = { status: 200, body: { sha: commit, ...top } };
   for (const top of tops) {
     const roots = new Set(Object.keys(files).filter((path) => path.startsWith(`${top}/`)).map((path) => path.split('/')[1]));
     recording[`${api}/git/trees/${commit}-${top}`] = { status: 200, body: { truncated: false, tree: [...roots].map((root) => dir(root, `${commit}-${top}-${root}`)) } };
@@ -136,9 +138,9 @@ export function acme({ token = false, remaining = 5000 } = {}): Recording {
     ...budget(remaining),
     ...recordRepository('acme/no-skills', { 'src/main.ts': '', '.github/workflows/ci.yml': '' }),
     ...recordRepository('acme/MPS', { '.agents/skills/mps-tests/SKILL.md': ACME_SKILL, '.claude/skills/mps-tests/SKILL.md': ACME_SKILL }, { branch: 'master', commit: 'mps1' }),
+    'https://api.github.com/repos/acme/empty/git/trees/main': { status: 409, body: { message: 'Git Repository is empty.' } },
     'https://api.github.com/repos/acme/empty/commits/main': { status: 409, body: { message: 'Git Repository is empty.' } },
-    'https://api.github.com/repos/acme/broken/commits/main': { status: 200, body: { sha: 'b0' } },
-    'https://api.github.com/repos/acme/broken/git/trees/b0': { status: 500, body: { message: 'Server Error' } },
+    'https://api.github.com/repos/acme/broken/git/trees/main': { status: 500, body: { message: 'Server Error' } },
     ...recordRepository('acme/huge', { '.claude/skills/build/SKILL.md': '---\nname: build\ndescription: Build it.\n---\n' }, { commit: 'h1', truncated: true }),
     ...recordRepository('acme/api', { '.github/skills/api-docs/SKILL.md': '---\nname: api-docs\ndescription: Document the API. All of it.\n---\n' }, { commit: 'a1' }),
     ...(token ? recordRepository('acme/secret', { '.claude/skills/deploy/SKILL.md': '---\nname: deploy\ndescription: Deploy.\n---\n' }, { commit: 's1' }) : {}),
