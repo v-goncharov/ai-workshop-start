@@ -544,6 +544,8 @@ test('no motion under prefers-reduced-motion: what moves is only in the no-prefe
   // The talking alpaca wobbles only here, and so does the crest when it comments.
   assert.match(motion, /\.speaker\.wobble \.hero \{ animation: wobble /);
   assert.match(motion, /\.crest\.wobble \.alpaca \{ animation: wobble /);
+  // The visitor slides in and out only here.
+  assert.match(motion, /\.visitor \{ transition: transform /);
 });
 
 // The crest alpaca comments on what the user does (spec/web.md, "Look"). Chance is pinned: Math.random answers the
@@ -587,7 +589,8 @@ async function commentPage(t: TestContext, path: string, rolled: number[] = [], 
   const document = window.document;
   const bubble = document.querySelector('.masthead .comment') as HTMLElement;
   const crest = document.querySelector('a.crest') as HTMLElement;
-  return { window, document, bubble, crest, says: () => bubble.textContent ?? '' };
+  const visitor = document.querySelector('.visitor') as HTMLElement;
+  return { window, document, bubble, crest, visitor, says: () => bubble.textContent ?? '' };
 }
 
 /** A click as a user makes it; links don't navigate (jsdom can't). */
@@ -625,20 +628,154 @@ test('the crest alpaca comments: the same speech bubble, beside the crest, annou
   assert.match(css, /\.bubble\.comment \{[^}]*position: fixed;[^}]*top: var\(--top/, 'placed in the window');
 });
 
-test('the comment is below the crest, or at the top of the window when the page is scrolled past it', async (t) => {
-  const { document, bubble, crest, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
-  timers(t);
-  let box = { top: 48, bottom: 136, left: 64 };
+/** The crest where the page puts it: `in` view, below the masthead's top, or scrolled `out` of view, fully or mostly. */
+const CREST = {
+  in: { top: 48, bottom: 136, left: 64 },
+  out: { top: -600, bottom: -512, left: 64 },
+  mostlyOut: { top: -50, bottom: 38, left: 64 }, // more than half of it above the window
+  mostlyIn: { top: -30, bottom: 58, left: 64 }, // less than half of it
+};
+function crestAt(crest: HTMLElement, box: { top: number; bottom: number; left: number }) {
   crest.getBoundingClientRect = () => box as DOMRect;
+}
+const visiting = ({ visitor, bubble }: { visitor: HTMLElement; bubble: HTMLElement }) => [visitor.classList.contains('here'), bubble.classList.contains('visiting')];
+const scroll = (window: DOMWindow) => window.dispatchEvent(new window.Event('scroll'));
+
+test('a comment with the crest in view: below the crest, its tail up at it; no visitor', async (t) => {
+  const page = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const { document, bubble, crest, says } = page;
+  timers(t);
+  crestAt(crest, CREST.in);
   clickOn(document.querySelector('main')!);
   assert.ok(says());
   assert.deepEqual([bubble.style.getPropertyValue('--top'), bubble.style.getPropertyValue('--left')], ['148px', '64px']);
+  assert.deepEqual(visiting(page), [false, false], 'no visitor');
   tick(t, 10_000);
-  box = { top: -600, bottom: -512, left: 64 };
+  crestAt(crest, CREST.mostlyIn);
   clickOn(document.querySelector('main')!);
   assert.ok(says());
-  assert.equal(bubble.style.getPropertyValue('--top'), '12px', 'scrolled: at the top of the window');
+  assert.deepEqual(visiting(page), [false, false], 'less than half of the crest scrolled away: still at the crest');
   t.mock.timers.reset();
+});
+
+test('the crest out of view: the visitor peeks in from the bottom-left corner, the bubble beside it; both gone after 5 s', async (t) => {
+  const page = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const { document, crest, says } = page;
+  assert.ok(page.visitor, 'the visitor, drawn once in the page');
+  assert.equal(page.visitor.querySelector('use')?.getAttribute('href'), '#alpaca', 'the same fancy alpaca as the crest');
+  timers(t);
+  crestAt(crest, CREST.out);
+  clickOn(document.querySelector('main')!);
+  const comment = says();
+  assert.ok(from('emptyPage', comment));
+  assert.deepEqual(visiting(page), [true, true], 'the visitor and the bubble beside it');
+  tick(t, 4999);
+  assert.equal(says(), comment);
+  assert.deepEqual(visiting(page), [true, true]);
+  tick(t, 1);
+  assert.equal(says(), '', 'the comment gone after 5 s');
+  assert.deepEqual(visiting(page), [false, false], 'the visitor gone with it');
+  tick(t, 10_000);
+  crestAt(crest, CREST.mostlyOut);
+  clickOn(document.querySelector('main')!);
+  assert.ok(says());
+  assert.deepEqual(visiting(page), [true, true], 'more than half of the crest scrolled away: the visitor');
+  t.mock.timers.reset();
+
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.visitor \{[^}]*position: fixed;[^}]*left: [^;]+;[^}]*bottom: [^;]+;/, 'in the bottom-left corner of the window');
+  assert.match(css, /\.visitor \.alpaca \{ width: 62px; height: 76px;/, 'at the crest’s size');
+  assert.match(css, /\.bubble\.comment\.visiting \{[^}]*top: auto;[^}]*bottom: [^;]+;/, 'the bubble beside it, at the bottom');
+  assert.match(css, /\.bubble\.comment\.visiting::before \{[^}]*left: -8px;/, 'its tail pointing at the visitor');
+});
+
+test('a new comment while the visitor is there replaces the text; the visitor stays', async (t) => {
+  const page = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const { document, crest, says } = page;
+  timers(t);
+  crestAt(crest, CREST.out);
+  clickOn(document.querySelector('main')!);
+  const first = says();
+  tick(t, 3000);
+  // Past the 10 s between two comments, while the first is still shown: the clock alone, no timer runs.
+  t.mock.timers.setTime(Date.now() + 10_000);
+  clickOn(document.querySelector('main')!);
+  assert.notEqual(says(), first, 'the text replaced');
+  assert.ok(from('emptyPage', says()));
+  assert.deepEqual(visiting(page), [true, true], 'the visitor stays');
+  tick(t, 4999);
+  assert.deepEqual(visiting(page), [true, true], '5 s from the new comment');
+  tick(t, 1);
+  assert.deepEqual([says(), ...visiting(page)], ['', false, false]);
+  t.mock.timers.reset();
+});
+
+test('scrolling while it speaks: the crest back in view → the visitor goes, the comment carries on below the crest; out again → it comes back', async (t) => {
+  const page = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const { window, document, bubble, crest, says } = page;
+  timers(t);
+  crestAt(crest, CREST.out);
+  clickOn(document.querySelector('main')!);
+  const comment = says();
+  assert.deepEqual(visiting(page), [true, true]);
+  tick(t, 1000);
+  crestAt(crest, CREST.in);
+  scroll(window);
+  assert.deepEqual(visiting(page), [false, false], 'the visitor goes');
+  assert.equal(says(), comment, 'the comment carries on');
+  assert.deepEqual([bubble.style.getPropertyValue('--top'), bubble.style.getPropertyValue('--left')], ['148px', '64px'], 'below the crest');
+  tick(t, 1000);
+  crestAt(crest, CREST.out);
+  scroll(window);
+  assert.deepEqual(visiting(page), [true, true], 'the visitor comes back');
+  tick(t, 3000);
+  assert.deepEqual([says(), ...visiting(page)], ['', false, false], 'gone when the comment’s 5 s are up');
+  scroll(window);
+  assert.deepEqual(visiting(page), [false, false], 'no comment, no visitor');
+  t.mock.timers.reset();
+});
+
+test('the visitor is out of the way: aria-hidden, takes no focus, clicks go through; the comment announced once, by the bubble', async (t) => {
+  const page = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  const { window, document, visitor, bubble, crest, says } = page;
+  timers(t);
+  assert.equal(visitor.getAttribute('aria-hidden'), 'true');
+  assert.equal(visitor.querySelector('a, button, input, [tabindex]'), null, 'nothing in it to focus');
+  assert.equal(visitor.hasAttribute('tabindex'), false);
+  assert.equal(visitor.textContent?.trim(), '', 'no text of its own to announce');
+  assert.equal(visitor.closest('[aria-live]'), null);
+  assert.equal(bubble.getAttribute('aria-live'), 'polite');
+  const filter = document.getElementById('filter') as HTMLInputElement;
+  filter.focus();
+  crestAt(crest, CREST.out);
+  type(window, 'zzz');
+  tick(t, 800);
+  assert.equal(says(), '“zzz”? Never heard of it.');
+  assert.deepEqual(visiting(page), [true, true]);
+  assert.equal(document.activeElement, filter, 'the focus stays in the filter');
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.visitor \{[^}]*pointer-events: none/, 'clicks go through it');
+  t.mock.timers.reset();
+});
+
+test('the visitor slides up into view and back down; under prefers-reduced-motion it appears and goes without moving', async () => {
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  const motion = css.slice(css.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+  // Out of sight below the window, then in place: only the no-preference block makes it a slide.
+  assert.match(css, /\.visitor \{[^}]*visibility: hidden;[^}]*transform: translateY\(/);
+  assert.match(css, /\.visitor\.here \{ visibility: visible; transform: none; \}/);
+  assert.match(motion, /\.visitor \{ transition: transform [^}]*visibility /);
+  const still = css.slice(0, css.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+  assert.doesNotMatch(still, /\.visitor[^{]*\{[^}]*(transition|animation)\s*:/);
+});
+
+test('at phone width the visitor fits, the bubble beside it inside the window', async () => {
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  const visitor = /\.visitor \{[^}]*left: (\d+)px;/.exec(css);
+  const bubble = /\.bubble\.comment\.visiting \{[^}]*left: (\d+)px;[^}]*max-width: min\(260px, calc\(100vw - (\d+)px\)\);/.exec(css);
+  assert.ok(visitor && bubble, 'the visitor and its bubble placed in px, the bubble no wider than the window leaves');
+  assert.ok(Number(visitor[1]) + 62 <= Number(bubble[1]), 'the bubble beside the visitor, not over it');
+  assert.ok(Number(bubble[2]) >= Number(bubble[1]) + 8, 'a margin on the right at any width');
 });
 
 test('a scan started: a GitHub URL, an owner or a directory, said shortly', async (t) => {
