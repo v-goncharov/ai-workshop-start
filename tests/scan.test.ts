@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { openGitHub } from '../src/core/github.ts';
+import { openGitHub, type Fetch } from '../src/core/github.ts';
+import { scan } from '../src/core/scan.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay } from '../src/core/replay.ts';
 import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
@@ -93,23 +94,27 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
   });
 });
 
-test('…/tree/<commit> scans that commit, through the tree even with a token: code search sees only the default branch', async () => {
+test('…/tree/<commit> scans that commit', async () => {
   const commit = '1111111111111111111111111111111111111111';
   const pinned = replay({
     'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
     [`https://api.github.com/repos/JetBrains/example/commits/${commit}`]: { status: 200, body: { sha: commit } },
-    [`https://api.github.com/repos/JetBrains/example/git/trees/${commit}?recursive=1`]: {
+    [`https://api.github.com/repos/JetBrains/example/git/trees/${commit}`]: {
       status: 200,
-      body: { truncated: false, tree: [{ path: '.claude/skills/commits/SKILL.md', mode: '100644', type: 'blob', sha: 'a' }] },
+      body: { truncated: false, tree: [{ path: '.agents', mode: '040000', type: 'tree', sha: 'agents' }] },
     },
-    [`https://raw.githubusercontent.com/JetBrains/example/${commit}/.claude/skills/commits/SKILL.md`]: {
+    'https://api.github.com/repos/JetBrains/example/git/trees/agents': {
       status: 200,
-      body: '---\nname: commits\ndescription: Write commits.\n---\n',
+      body: { truncated: false, tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'skills' }] },
+    },
+    'https://api.github.com/repos/JetBrains/example/git/trees/skills?recursive=1': {
+      status: 200,
+      body: { truncated: false, tree: [{ path: 'commits/SKILL.md', mode: '100644', type: 'blob', sha: 'a' }] },
     },
   });
   const source = await openGitHub(`https://github.com/JetBrains/example/tree/${commit}/`, { fetch: pinned, token: 'test' });
   assert.equal(source.repository.commit, commit);
-  assert.deepEqual(source.paths, ['.claude/skills/commits/SKILL.md']);
+  assert.deepEqual(source.paths, ['.agents/skills/commits/SKILL.md']);
 
   const missing = replay({
     'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
@@ -118,4 +123,67 @@ test('…/tree/<commit> scans that commit, through the tree even with a token: c
   await assert.rejects(openGitHub('https://github.com/JetBrains/example/tree/no-such-ref', { fetch: missing }), {
     message: 'Not found in https://github.com/JetBrains/example: no-such-ref',
   });
+});
+
+/** A repository too large for code search or one tree answer: only its skill roots are asked for. */
+function monorepo(skillsTruncated = false) {
+  const commit = '2222222222222222222222222222222222222222';
+  const asked: { url: string; authorization?: string }[] = [];
+  const recorded = replay({
+    'https://api.github.com/repos/JetBrains/ultimate': { status: 200, body: { full_name: 'JetBrains/ultimate', default_branch: 'master' } },
+    'https://api.github.com/repos/JetBrains/ultimate/commits/master': { status: 200, body: { sha: commit } },
+    // A huge top level: the skill roots are found in it, not in a recursive tree.
+    [`https://api.github.com/repos/JetBrains/ultimate/git/trees/${commit}`]: {
+      status: 200,
+      body: {
+        truncated: false,
+        tree: [
+          { path: '.claude', mode: '040000', type: 'tree', sha: 'claude' },
+          { path: 'community', mode: '040000', type: 'tree', sha: 'community' },
+        ],
+      },
+    },
+    'https://api.github.com/repos/JetBrains/ultimate/git/trees/claude': {
+      status: 200,
+      body: { truncated: false, tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'claude-skills' }] },
+    },
+    'https://api.github.com/repos/JetBrains/ultimate/git/trees/claude-skills?recursive=1': {
+      status: 200,
+      body: { truncated: skillsTruncated, tree: [{ path: 'build/SKILL.md', mode: '100644', type: 'blob', sha: 'b' }] },
+    },
+    [`https://raw.githubusercontent.com/JetBrains/ultimate/${commit}/.claude/skills/build/SKILL.md`]: {
+      status: 200,
+      body: '---\nname: build\ndescription: Build the IDE.\n---\n',
+    },
+  });
+  const fetch: Fetch = (url, init) => {
+    asked.push({ url, authorization: init?.headers?.Authorization });
+    return recorded(url, init);
+  };
+  return { fetch, asked };
+}
+
+test('a repository too large for code search: its skills, from the skill roots, with no search and no whole tree', async () => {
+  const { fetch, asked } = monorepo();
+  const result = await scan(await openGitHub('https://github.com/JetBrains/ultimate', { fetch, token: 'test' }));
+  assert.deepEqual(result.skills.map((skill) => skill.path), ['.claude/skills/build/SKILL.md']);
+  assert.deepEqual(result.warnings, []);
+  const urls = asked.map(({ url }) => url);
+  assert.deepEqual(urls.filter((url) => url.includes('/search/')), []);
+  // The only recursive listing is the skill root's own.
+  assert.deepEqual(urls.filter((url) => url.endsWith('?recursive=1')), ['https://api.github.com/repos/JetBrains/ultimate/git/trees/claude-skills?recursive=1']);
+});
+
+test('a private repository: the token goes with every request, file reads too', async () => {
+  const { fetch, asked } = monorepo();
+  await scan(await openGitHub('https://github.com/JetBrains/ultimate', { fetch, token: 'secret' }));
+  assert.ok(asked.length > 0);
+  for (const { url, authorization } of asked) assert.equal(authorization, 'Bearer secret', url);
+});
+
+test('a skill root too large for one answer → a warning, the skills that were listed', async () => {
+  const { fetch } = monorepo(true);
+  const result = await scan(await openGitHub('https://github.com/JetBrains/ultimate', { fetch }));
+  assert.equal(result.skills.length, 1);
+  assert.deepEqual(result.warnings, ['.claude/skills has too many files to list at once; some of its skills may be missing']);
 });
