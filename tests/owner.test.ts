@@ -118,6 +118,54 @@ test('no skills in any repository → the summary and which folders count, exit 
   );
 });
 
+test('--filter on an owner: the summary, then only the repositories with a match, each with its filtered header', async () => {
+  // `it` is in huge's "Build it." and api's "All of it." (the full description), not in MPS.
+  const scanned = await atlas(['scan', 'https://github.com/acme', '--filter', 'it'], { fetch: replay(acme()) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(
+    scanned.stdout,
+    [
+      'acme · 3 skills in 3 of 5 repositories (94 forks, 1 archived and 1 empty skipped)',
+      'acme/api · 1 of 1 skill match "it"',
+      'api-docs — Document the API.',
+      '  https://github.com/acme/api/blob/a1/.github/skills/api-docs/SKILL.md',
+      'acme/huge · 1 of 1 skill match "it"',
+      'build — Build it.',
+      '  https://github.com/acme/huge/blob/h1/.claude/skills/build/SKILL.md',
+    ].join('\n'),
+  );
+  // --filter before the input; a blank filter is the same as none.
+  const before = await atlas(['scan', '--filter', 'it', 'https://github.com/acme'], { fetch: replay(acme()) });
+  assert.equal(before.stdout, scanned.stdout);
+  const blank = await atlas(['scan', 'https://github.com/acme', '--filter', '  '], { fetch: replay(acme()) });
+  assert.equal(blank.stdout, ACME_STDOUT);
+});
+
+test('--filter on an owner, no match in any repository → the summary, then "No skills match", exit code 0; warnings still go to stderr', async () => {
+  const scanned = await atlas(['scan', 'https://github.com/acme', '--filter', 'gradle bump'], { fetch: replay(acme()) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ['acme · 3 skills in 3 of 5 repositories (94 forks, 1 archived and 1 empty skipped)', 'No skills match "gradle bump"'].join('\n'));
+  assert.match(scanned.stderr, /^warning: acme\/broken: /);
+});
+
+test('--filter on an owner with no skills at all → the same as without a filter', async () => {
+  const recording: Recording = {
+    ...NOT_AN_ORGANIZATION,
+    'https://api.github.com/users/jane/repos?per_page=100&page=1': { status: 200, body: [listed('jane/a')] },
+    ...budget(60),
+    ...recordRepository('jane/a', {}),
+  };
+  const scanned = await atlas(['scan', 'https://github.com/jane', '--filter', 'tests'], { fetch: replay(recording) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(
+    scanned.stdout,
+    [
+      'jane · 0 skills in 0 of 1 repository',
+      'Skills count only as <root>/<name>/SKILL.md under .agents/skills, .claude/skills or .github/skills',
+    ].join('\n'),
+  );
+});
+
 test('unknown owner → a clear message, exit code 1', async () => {
   const recording: Recording = {
     'https://api.github.com/orgs/nobody/repos?per_page=100&page=1': { status: 404, body: { message: 'Not Found' } },

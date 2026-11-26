@@ -32,10 +32,12 @@ export type OwnerScanResponse = {
   warnings: string[];
 };
 
+/** The page's files, relative to this one. The filter is the CLI's own module. */
 const STATIC: Record<string, { file: string; type: string }> = {
-  '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
-  '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
-  '/style.css': { file: 'style.css', type: 'text/css; charset=utf-8' },
+  '/': { file: './static/index.html', type: 'text/html; charset=utf-8' },
+  '/app.js': { file: './static/app.js', type: 'text/javascript; charset=utf-8' },
+  '/filter.js': { file: '../core/filter.js', type: 'text/javascript; charset=utf-8' },
+  '/style.css': { file: './static/style.css', type: 'text/css; charset=utf-8' },
 };
 
 export function createWebServer(options: WebOptions): Server {
@@ -99,7 +101,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
 
   const asset = STATIC[url.pathname];
   if (!asset) return json(response, 404, { error: `Not found: ${url.pathname}` });
-  const body = await readFile(new URL(`./static/${asset.file}`, import.meta.url));
+  const body = await readFile(new URL(asset.file, import.meta.url));
   response.writeHead(200, { 'content-type': asset.type, 'cache-control': 'no-cache', ...SECURITY });
   response.end(request.method === 'HEAD' ? undefined : body);
 }

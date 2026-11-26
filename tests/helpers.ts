@@ -1,5 +1,9 @@
 // Runs the commands the way the CLI does, with GitHub answering from EXAMPLE below.
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import type { TestContext } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from '../src/commands.ts';
 import { openGitHub, parseGitHubUrl, type GitHubOptions } from '../src/core/github.ts';
 import { scanOwner } from '../src/core/owner.ts';
@@ -141,3 +145,22 @@ export function acme({ token = false, remaining = 5000 } = {}): Recording {
   };
 }
 
+/** What the filter is tried on (tests/filter.test.ts, tests/web.test.ts): words in each field, a copy, and a full description. */
+export const SKILLS: Record<string, string> = {
+  '.claude/skills/build-tools-bump-gradle-api/SKILL.md':
+    '---\nname: build-tools-bump-gradle-api\ndescription: Bumps the Gradle API version that Kotlin Gradle plugins are compiled against. Use it after each Gradle release.\n---\n',
+  '.claude/skills/commits/SKILL.md': '---\nname: commits\ndescription: Write commit messages the way this repository does. Use for every commit.\n---\n',
+  '.agents/skills/mps-tests/SKILL.md': '---\nname: mps-tests\ndescription: Run the MPS tests.\n---\n',
+  '.github/skills/mps-tests/SKILL.md': '---\nname: mps-tests\ndescription: Run the MPS tests.\n---\n',
+};
+
+/** A repository named `repo` with the given files, removed after the test. */
+export function repository(t: TestContext, files: Record<string, string> = SKILLS) {
+  const root = join(mkdtempSync(join(tmpdir(), 'skill-atlas-')), 'repo');
+  t.after(() => rmSync(dirname(root), { recursive: true, force: true }));
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
+  return { root, url: pathToFileURL(root).href };
+}

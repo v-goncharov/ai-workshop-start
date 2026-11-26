@@ -1,6 +1,7 @@
 // The web view's client: reads ?input=, asks /api/scan and renders one of the states —
 // idle, loading, error, result (with no skills, with warnings, filtered). All text goes in
 // through textContent; nothing from a repository becomes markup.
+import { filterWords, matchesFilter } from './filter.js';
 
 const form = document.getElementById('scan-form');
 const input = document.getElementById('input');
@@ -51,7 +52,7 @@ form.addEventListener('submit', (event) => {
     input.focus();
     return;
   }
-  const url = `/?input=${encodeURIComponent(value)}`;
+  const url = addressFor(value);
   if (location.pathname + location.search !== url) history.pushState(null, '', url);
   scanInput(value);
 });
@@ -67,6 +68,12 @@ result.addEventListener('click', (event) => {
   fromLocation();
 });
 window.addEventListener('popstate', fromLocation);
+
+/** The page's address for a scan: `/?input=<it>`, and `&filter=<words>` unless the filter is blank. */
+function addressFor(value, words = '') {
+  const filter = filterWords(words).join(' ');
+  return `/?input=${encodeURIComponent(value)}${filter ? `&filter=${encodeURIComponent(filter)}` : ''}`;
+}
 
 function fromLocation() {
   const value = new URLSearchParams(location.search).get('input')?.trim() ?? '';
@@ -192,38 +199,44 @@ function noSkills(where) {
 }
 
 /**
- * A filter over the rows of one or more tables: `rows` are { row, text, section? }; a section with no
- * matching row is hidden. `noMatch` shows when nothing matches, its message in `message`.
- * Returns the field and the live count.
+ * A filter over the rows of one or more tables, by the CLI's rules: `rows` are { skill, row, section? }; a section
+ * with no matching row is hidden. `noMatch` shows when nothing matches, its message in `message`.
+ * It starts from ?filter= in the address and keeps it there. Returns the field and the live count.
  */
 function rowFilter(rows, total, noMatch, message = noMatch) {
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
+  const applyFilter = () => {
+    const words = filterWords(filter.value);
+    let shown = 0;
+    const sections = new Map();
+    for (const { skill, row, section } of rows) {
+      const match = matchesFilter(skill, words);
+      row.hidden = !match;
+      if (match) shown++;
+      if (section) sections.set(section, (sections.get(section) ?? false) || match);
+    }
+    for (const [section, any] of sections) section.hidden = !any;
+    noMatch.hidden = shown > 0;
+    message.replaceChildren(
+      `No skills match “${words.join(' ')}”. `,
+      h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
+    );
+    count.textContent = words.length > 0 ? `Showing ${shown.toLocaleString('en')} of ${plural(total, 'skill', 'skills')}` : '';
+  };
   const filter = h('input', {
     id: 'filter', type: 'search', autocomplete: 'off',
     oninput: () => {
-      const query = filter.value.trim().toLowerCase();
-      let shown = 0;
-      const sections = new Map();
-      for (const { row, text, section } of rows) {
-        const match = !query || text.includes(query);
-        row.hidden = !match;
-        if (match) shown++;
-        if (section) sections.set(section, (sections.get(section) ?? false) || match);
-      }
-      for (const [section, any] of sections) section.hidden = !any;
-      noMatch.hidden = shown > 0;
-      message.replaceChildren(
-        `No skills match “${filter.value.trim()}”. `,
-        h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
-      );
-      count.textContent = query ? `Showing ${shown.toLocaleString('en')} of ${plural(total, 'skill', 'skills')}` : '';
+      applyFilter();
+      // In the address, so a filtered scan can be shared and reloaded; no history entry per key.
+      const params = new URLSearchParams(location.search);
+      const url = addressFor(params.get('input') ?? '', filter.value);
+      if (location.pathname + location.search !== url) history.replaceState(null, '', url);
     },
   });
+  // ?filter= from the address: a shared or reloaded filtered scan.
+  filter.value = new URLSearchParams(location.search).get('filter') ?? '';
+  applyFilter();
   return h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count);
-}
-
-function rowText(skill) {
-  return `${skill.name}\n${skill.description}\n${skill.path}`.toLowerCase();
 }
 
 /** An owner: the summary, then one table per repository with skills; the filter goes across all of them. */
@@ -245,7 +258,7 @@ function showOwnerResult({ owner, repositories, skipped, warnings }, elapsed) {
   const rows = [];
   const sections = repositories.map(({ repository, skills }) => {
     const section = h('section', { class: 'repository' });
-    const own = skills.map((skill) => ({ skill, row: skillRow(skill, true), text: rowText(skill), section }));
+    const own = skills.map((skill) => ({ skill, row: skillRow(skill, true), section }));
     rows.push(...own);
     section.append(
       h('h2', {}, h('a', { href: repository.url }, repository.id)),
@@ -274,7 +287,7 @@ function showResult({ repository, skills, warnings }, elapsed) {
     return show(h('div', { class: 'summary' }, h('div', {}, heading, meta)), warningList(warnings), noSkills(repository.id));
   }
 
-  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb), text: rowText(skill) }));
+  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
   const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));
 
   show(
