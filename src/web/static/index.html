@@ -84,7 +84,11 @@
 
     <section id="result" aria-live="polite" aria-busy="false">
       <div class="state idle" data-state="idle">
-        <svg class="alpaca hero"><use href="#alpaca"/></svg>
+        <!-- The alpaca speaks: a joke in the bubble on each click (app.js). -->
+        <div class="stage">
+          <button type="button" class="speaker" aria-label="Ask the alpaca for a joke"><svg class="alpaca hero" aria-hidden="true"><use href="#alpaca"/></svg></button>
+          <p class="bubble" aria-live="polite"></p>
+        </div>
         <h1 class="state-title">The alpaca awaits, impeccably dressed</h1>
         <p class="ornament" aria-hidden="true">✦ ✦ ✦</p>
         <p>Nothing scanned yet. Skill Atlas lists each <code>&lt;root&gt;/&lt;name&gt;/SKILL.md</code> under <code>.agents/skills</code>, <code>.claude/skills</code> and <code>.github/skills</code>, linked to the file at the scanned commit. Nothing is stored; every scan sends the alpaca out to read the repository again.</p>

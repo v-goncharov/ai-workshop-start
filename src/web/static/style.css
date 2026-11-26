@@ -246,6 +246,39 @@ button.link {
 
 .idle { margin: var(--space-4) auto 0; text-align: center; }
 .idle .hero { width: 168px; height: 210px; margin: 0 auto var(--space-4); filter: drop-shadow(0 14px 14px rgb(74 52 24 / 22%)); }
+/* The idle alpaca speaks: a button with no button look, and a speech bubble beside it, shown only while it has a joke. */
+.stage { position: relative; width: fit-content; margin: 0 auto; }
+button.speaker { display: block; height: auto; padding: 0; border: 0; border-radius: var(--radius-lg); background: none; }
+.bubble {
+  position: absolute;
+  left: calc(100% + var(--space-2));
+  top: var(--space-6);
+  width: max-content;
+  max-width: 260px;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font: italic 400 var(--text-md)/1.4 var(--font-display);
+  text-align: left;
+}
+.bubble:empty { visibility: hidden; }
+/* The tail, towards the alpaca. */
+.bubble::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 22px;
+  width: 14px;
+  height: 14px;
+  background: var(--surface);
+  border-left: 1px solid var(--gold);
+  border-bottom: 1px solid var(--gold);
+  transform: rotate(45deg);
+}
 .ornament { color: var(--gold); letter-spacing: 0.5em; font-size: var(--text-sm); }
 .invitation {
   display: inline-block;
@@ -397,12 +430,14 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   .progress progress::-webkit-progress-value { transition: width 0.3s; }
   .skeleton { animation: pulse 1.2s ease-out infinite alternate; }
   .idle .hero { animation: sway 5s ease-in-out infinite alternate; transform-origin: 50% 100%; }
+  .speaker.wobble .hero { animation: wobble 0.6s ease-in-out; }
   .trotter use { animation: trot 0.45s ease-in-out infinite alternate; }
   .trail.resting .trotter use { animation: none; }
   .trail.roaming .trotter { animation: roam 5s linear infinite; transition: none; }
 }
 @keyframes pulse { to { opacity: 0.5; } }
 @keyframes sway { from { transform: rotate(-2deg); } to { transform: rotate(2deg) translateY(-4px); } }
+@keyframes wobble { 25% { transform: rotate(-5deg); } 50% { transform: rotate(4deg) translateY(-3px); } 75% { transform: rotate(-2deg); } }
 @keyframes trot { from { transform: translateY(0); } to { transform: translateY(-3px); } }
 /* There and back, turning round at each end. */
 @keyframes roam {
@@ -435,6 +470,9 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   .scan-row button { width: 100%; }
   .filter { width: 100%; min-width: 0; }
   .idle .hero { width: 128px; height: 160px; }
+  /* No room beside the alpaca: the bubble above it, its tail pointing down. */
+  .bubble { left: 50%; top: auto; bottom: calc(100% - var(--space-6)); max-width: min(260px, 80vw); transform: translateX(-50%); }
+  .bubble::before { left: calc(50% - 7px); top: auto; bottom: -8px; transform: rotate(-45deg); }
   .skills thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .skills, .skills tbody, .skills tr, .skills td { display: block; width: auto; }
   .skills tr[hidden] { display: none; }

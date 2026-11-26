@@ -424,6 +424,88 @@ test('the alpaca stands by an error and by "No skills"', async (t) => {
   assert.ok(empty.document.querySelector('.state svg.alpaca use[href="#alpaca"]'), 'the alpaca by "No skills"');
 });
 
+// The alpaca speaks (spec/web.md, "Look"): the idle alpaca, a button; its jokes in a speech bubble.
+const JOKES = [
+  'What do you call an alpaca with no fleece? A bald-paca.',
+  'Why did the alpaca get the job? It was outstanding in its field.',
+  "I'd tell you a joke about llamas, but no llamas were consulted.",
+  'How do alpacas stay cool? Fleece conditioning.',
+  "What's an alpaca's favourite drink? A llama-tini. Shaken, not sheared.",
+  'Alpacas never worry. They know everything will be all wool in the end.',
+  'I asked the alpaca to fetch your skills. It said: no prob-llama.',
+  'What does an alpaca read? The SKILL.md, obviously. Impeccably.',
+];
+
+/** The idle page: its talking alpaca and the bubble it speaks in. */
+async function idlePage(t: TestContext) {
+  const window = await page(t, '/', { result: false, until: '.idle' });
+  const document = window.document;
+  const speaker = document.querySelector('.idle button.speaker') as HTMLButtonElement;
+  const bubble = document.querySelector('.idle .bubble') as HTMLElement;
+  return { window, document, speaker, bubble, says: () => bubble?.textContent ?? '' };
+}
+
+test('the idle alpaca speaks: a real button; a click shows a joke in a speech bubble, announced politely', async (t) => {
+  const { speaker, bubble, says } = await idlePage(t);
+  assert.ok(speaker, 'the alpaca is a button');
+  assert.equal(speaker.type, 'button');
+  assert.equal(speaker.getAttribute('aria-label'), 'Ask the alpaca for a joke');
+  assert.ok(speaker.querySelector('svg.alpaca.hero use[href="#alpaca"]'), 'the hero alpaca inside it');
+  assert.ok(bubble, 'the bubble');
+  assert.equal(bubble.getAttribute('aria-live'), 'polite');
+  assert.equal(says(), '', 'silent until clicked');
+  speaker.click();
+  assert.ok(JOKES.includes(says()), says());
+  assert.ok(speaker.classList.contains('wobble'), 'the alpaca wobbles');
+});
+
+test('another click, another joke: picked at random, never the same one twice in a row', async (t) => {
+  const { speaker, says } = await idlePage(t);
+  // Even when chance picks the same one, the alpaca says another.
+  t.mock.method(Math, 'random', () => 0);
+  speaker.click();
+  const first = says();
+  speaker.click();
+  assert.ok(JOKES.includes(says()));
+  assert.notEqual(says(), first);
+  t.mock.restoreAll();
+  const heard = [says()];
+  for (let i = 0; i < 60; i++) {
+    speaker.click();
+    heard.push(says());
+  }
+  for (let i = 1; i < heard.length; i++) assert.notEqual(heard[i], heard[i - 1], `the same joke twice: ${heard[i]}`);
+  assert.ok(heard.every((joke) => JOKES.includes(joke)));
+  assert.ok(new Set(heard).size > 3, 'at random');
+});
+
+test('the bubble goes after 5 s, or on a click anywhere else', async (t) => {
+  const { document, speaker, says } = await idlePage(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  speaker.click();
+  t.mock.timers.tick(4900);
+  assert.notEqual(says(), '', 'still there before 5 s');
+  // Another joke starts the 5 s again.
+  speaker.click();
+  t.mock.timers.tick(4900);
+  assert.notEqual(says(), '');
+  t.mock.timers.tick(100);
+  assert.equal(says(), '', 'gone after 5 s');
+  speaker.click();
+  assert.notEqual(says(), '');
+  (document.querySelector('.idle .state-title') as HTMLElement).click();
+  assert.equal(says(), '', 'gone on a click elsewhere');
+  t.mock.timers.reset();
+});
+
+test('the crest stays a plain link home; it does not speak', async (t) => {
+  const { document } = await idlePage(t);
+  const crest = document.querySelector('a.crest') as HTMLAnchorElement;
+  assert.equal(crest.getAttribute('href'), '/');
+  assert.equal(crest.querySelector('button'), null);
+  assert.equal(document.querySelectorAll('button.speaker').length, 1, 'only the idle alpaca speaks');
+});
+
 test('no motion under prefers-reduced-motion: what moves is only in the no-preference block', async () => {
   const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
   const start = css.indexOf('@media (prefers-reduced-motion: no-preference) {');
@@ -440,6 +522,8 @@ test('no motion under prefers-reduced-motion: what moves is only in the no-prefe
   assert.match(motion, /\.trotter \{ transition: left /);
   assert.match(motion, /::-webkit-progress-value \{ transition: width /);
   assert.match(motion, /\.crest:hover \.alpaca \{ transform: /);
+  // The talking alpaca wobbles only here.
+  assert.match(motion, /\.speaker\.wobble \.hero \{ animation: wobble /);
 });
 
 /** `/api/scan` as the page asks for it: a stream of JSON lines. */

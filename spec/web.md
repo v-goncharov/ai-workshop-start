@@ -21,9 +21,14 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
 - *The alpaca* (top hat, monocle, bow tie) is the crest by the name, the idle state's picture, and stands by an error and by "No skills"
 - A second one *trots along an owner's progress bar*: back and forth while listing, at d of n while scanning, standing still during a wait
 - Both are drawn once in the page (`<symbol id="alpaca">`, `<symbol id="alpaca-trot">`) and coloured by `style.css`: no inline styles, no images to fetch
+- *The idle alpaca speaks*: it is a real button, "Ask the alpaca for a joke". A click (tap, Enter, Space) shows an alpaca dad joke
+  in a speech bubble beside it, picked at random from the ones in `app.js`, *never the same one twice in a row*; the alpaca wobbles.
+  Another click on it, another joke. The bubble goes after 5 s, or on a click anywhere else.
+  The bubble is an `aria-live="polite"` region, so screen readers announce the joke. No wobble under `prefers-reduced-motion`
+- The crest stays a plain link home; it does not speak
 - The copy speaks of the alpaca (it is sent out, grazes, comes back); the texts quoted below stay as they are. No motion under `prefers-reduced-motion`
 ## States
-- **Idle**: the alpaca, what is scanned, and one example
+- **Idle**: the alpaca (it speaks, see [Look](#look)), what is scanned, and one example
 - **Empty field** → "Enter a GitHub URL or a directory path.", no request
 - **Loading**: skeleton rows in the table's layout. An **owner**'s scan takes minutes, so above them a *progress bar* and what it does:
   `Listing the repositories… (page <n>)` (the bar moving, no end known), `Scanned <d> of <n> repositories` (the bar at d of n),
