@@ -27,7 +27,7 @@ function h(tag, attributes = {}, ...children) {
 }
 
 function show(...nodes) {
-  result.replaceChildren(...nodes);
+  result.replaceChildren(...nodes.filter(Boolean));
 }
 
 function setBusy(busy) {
@@ -107,7 +107,7 @@ async function scanInput(value) {
 
 /** What to do next, for the errors the scan explains. */
 function advice(message = '') {
-  if (/rate limit/i.test(message)) return 'Restart the server with GITHUB_TOKEN set (GITHUB_TOKEN=… ./skill-atlas serve), then scan again.';
+  if (/rate limit/i.test(message)) return ['Restart the server with a token, ', h('code', {}, 'GITHUB_TOKEN=… ./skill-atlas serve'), ', then scan again.'];
   if (/Cannot reach GitHub/i.test(message)) return 'Check your network connection, then scan again.';
   if (/not found/i.test(message)) return 'Check the owner, the repository name and the branch or commit. Private repositories need GITHUB_TOKEN.';
   if (/directory/i.test(message)) return 'Paste a full https://github.com/<owner>/<repo> URL, or a path to a directory the server can read.';
@@ -115,11 +115,13 @@ function advice(message = '') {
 }
 
 function showLoading() {
+  // Widths through classes: the page's CSP allows no inline styles.
+  const width = (index) => `skeleton w${index % 4}`;
   const rows = Array.from({ length: 6 }, (_, index) =>
     h('tr', {},
-      h('td', {}, h('span', { class: 'skeleton', style: `width: ${60 + ((index * 23) % 35)}%` })),
-      h('td', {}, h('span', { class: 'skeleton', style: `width: ${70 + ((index * 17) % 30)}%` }), h('span', { class: 'skeleton', style: 'width: 40%' })),
-      h('td', {}, h('span', { class: 'skeleton', style: `width: ${55 + ((index * 29) % 40)}%` })),
+      h('td', {}, h('span', { class: width(index) })),
+      h('td', {}, h('span', { class: width(index + 1) }), h('span', { class: 'skeleton w-short' })),
+      h('td', {}, h('span', { class: width(index + 2) })),
     ),
   );
   show(
@@ -167,7 +169,7 @@ function showResult({ repository, skills, warnings }, elapsed) {
     repository.local
       ? ' · local directory'
       : [' · commit ', h('a', { href: `${repository.url}/tree/${repository.commit}`, title: repository.commit }, h('code', {}, repository.commit.slice(0, 7)))],
-    ` · scanned in ${(elapsed / 1000).toFixed(1)} s`,
+    ` · scanned in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`,
   );
 
   const warningList = warnings.length > 0 &&

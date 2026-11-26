@@ -90,14 +90,13 @@ a:hover { color: var(--accent-hover); }
   gap: var(--space-1) var(--space-4);
   padding-top: var(--space-6);
   padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border);
 }
 .wordmark { margin: 0; font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; }
 .wordmark a { color: var(--text); text-decoration: none; }
 .tagline { margin: 0; color: var(--text-muted); font-size: var(--text-sm); }
 
 /* Scan form */
-.scan { padding: var(--space-6) 0; border-bottom: 1px solid var(--border); }
+.scan { padding: var(--space-6) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scan label { display: block; font-weight: 600; margin-bottom: var(--space-2); }
 .scan-row { display: flex; gap: var(--space-2); }
 .scan input {
@@ -209,7 +208,7 @@ button.link {
 .col-name { width: 22%; }
 .col-file { width: 32%; }
 .name { font-weight: 600; overflow-wrap: anywhere; }
-.description { max-width: 72ch; }
+.description { max-width: 72ch; overflow-wrap: anywhere; }
 .description .none { color: var(--text-muted); font-style: italic; }
 .description details { margin-top: var(--space-1); }
 .description summary { cursor: pointer; color: var(--accent); font-size: var(--text-sm); width: fit-content; }
@@ -221,6 +220,11 @@ button.link {
 
 /* Loading skeleton: the same rows as the table, so nothing shifts. */
 .skeleton { display: block; height: 0.9em; margin: 0.3em 0; background: var(--skeleton); border-radius: var(--radius); }
+.skeleton.w0 { width: 62%; }
+.skeleton.w1 { width: 88%; }
+.skeleton.w2 { width: 74%; }
+.skeleton.w3 { width: 95%; }
+.skeleton.w-short { width: 40%; }
 .skeleton.title { height: 24px; width: 220px; margin: 0; }
 .skeleton.meta-line { width: 160px; margin-top: var(--space-2); }
 @media (prefers-reduced-motion: no-preference) {
@@ -236,12 +240,14 @@ button.link {
 /* Narrow screens: the rows stay rows, their cells stack. */
 @media (max-width: 720px) {
   .masthead, main { padding: 0 var(--space-4); }
-  .masthead { padding-top: var(--space-4); }
+  .masthead { padding-top: var(--space-4); padding-bottom: var(--space-4); }
   .scan-row { flex-direction: column; }
+  .scan input { flex: none; }
   .scan-row button { width: 100%; }
   .filter { width: 100%; }
   .skills thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .skills, .skills tbody, .skills tr, .skills td { display: block; width: auto; }
+  .skills tr[hidden] { display: none; }
   .skills tr { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
   .skills td { padding: 0; border: 0; }
   .skills td + td { margin-top: var(--space-1); }
