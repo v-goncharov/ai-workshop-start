@@ -9,7 +9,23 @@ export type GitHubOptions = {
   fetch: Fetch;
   /** A higher rate limit, and private repositories. */
   token?: string;
+  /** Waits out GitHub's secondary rate limit; tests pass one that does not really wait. */
+  wait?: (ms: number) => Promise<void>;
+  /** Told when every request starts waiting `ms` for the secondary rate limit, to show it. */
+  paused?: (ms: number) => void;
 };
+
+/** Tries of a request GitHub refuses for its secondary rate limit: the first, then after each wait. */
+export const SECONDARY_TRIES = 3;
+/** The wait before the first retry when GitHub does not say (`retry-after`); it doubles for each one after. */
+const SECONDARY_WAIT = 60_000;
+/** A longer `retry-after` than this is not waited out: the scan stops. */
+const LONGEST_WAIT = 5 * 60_000;
+
+/** When GitHub's rate limit resets, from its epoch seconds: `2026-11-18 11:06 UTC`. */
+export function resetTime(seconds: number): string {
+  return `${new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
 
 const API = 'https://api.github.com';
 const RAW = 'https://raw.githubusercontent.com';
@@ -102,13 +118,29 @@ function files(tree: Tree): string[] {
 
 export type Client = ReturnType<typeof client>;
 
-/** GitHub API requests with the token, each URL asked for once; errors explained as AtlasErrors. */
-export function client({ fetch, token }: GitHubOptions) {
+/**
+ * GitHub API requests with the token, each URL asked for once; errors explained as AtlasErrors.
+ * GitHub's secondary rate limit, for too many requests in a short time, pauses every request of the client
+ * for as long as GitHub asks, then the refused one is tried again.
+ */
+export function client({ fetch, token, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), paused: onPause }: GitHubOptions) {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const answers = new Map<string, Promise<unknown>>(); // the root tree is asked for once per skill root
+  let paused: Promise<void> = Promise.resolve();
+  let pausedUntil = 0;
+
+  /** Holds back every request until `ms` from now, unless a longer pause is already on. */
+  function pause(ms: number) {
+    const until = Date.now() + ms;
+    if (until <= pausedUntil) return;
+    pausedUntil = until;
+    paused = wait(ms);
+    onPause?.(ms);
+  }
 
   async function get(url: string, init?: { headers: Record<string, string> }): Promise<Response> {
+    await paused;
     try {
       return await fetch(url, init);
     } catch (error) {
@@ -116,15 +148,29 @@ export function client({ fetch, token }: GitHubOptions) {
     }
   }
 
-  async function request(url: string, notFound: string): Promise<unknown> {
+  async function request(url: string, notFound: string, tries = 1): Promise<unknown> {
     const response = await get(url, { headers });
     if (response.ok) return response.json();
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
     if (response.status === 404) throw new GitHubError(404, notFound);
-    if ((response.status === 403 || response.status === 429) && /rate limit/i.test(text)) {
-      throw new RateLimitError(`GitHub rate limit reached; ${token ? 'try again in a minute' : 'set GITHUB_TOKEN'}`);
+    const retryAfter = Number(response.headers.get('retry-after') ?? NaN);
+    if ((response.status === 403 || response.status === 429) && (/rate limit/i.test(text) || retryAfter >= 0)) {
+      // The hourly budget says 0 left, or GitHub says so in the message; otherwise requests came too fast.
+      const remaining = response.headers.get('x-ratelimit-remaining');
+      const secondary = /secondary rate limit/i.test(text) || (remaining !== '0' && !/API rate limit exceeded/i.test(text));
+      if (!secondary) {
+        const reset = Number(response.headers.get('x-ratelimit-reset') ?? NaN);
+        const next = !token ? 'set GITHUB_TOKEN' : reset > 0 ? `try again after ${resetTime(reset)}` : 'try again when it resets, within the hour';
+        throw new RateLimitError(`GitHub rate limit reached; ${next}`);
+      }
+      const ms = retryAfter >= 0 ? retryAfter * 1000 : SECONDARY_WAIT * 2 ** (tries - 1);
+      if (tries >= SECONDARY_TRIES || ms > LONGEST_WAIT) {
+        throw new RateLimitError('GitHub refused requests again and again for coming too fast (its secondary rate limit); try again in a few minutes');
+      }
+      pause(ms);
+      return request(url, notFound, tries + 1);
     }
     if (response.status === 401) throw new GitHubError(401, 'GitHub rejected the token in GITHUB_TOKEN');
     throw new GitHubError(response.status, `GitHub answered ${response.status} for ${url}${text && `: ${text}`}`);

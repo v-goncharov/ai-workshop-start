@@ -18,12 +18,30 @@ import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } fr
 import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
 
 const logged: string[] = [];
+const slow = Promise.withResolvers<void>();
+const halted = Promise.withResolvers<void>();
 const server = createWebServer({
   open: (input) => {
     if (input === 'crash') throw new Error('boom');
+    // The rate limit's messages, as the CLI words them without and with a token.
+    if (input === 'limited-no-token') throw new AtlasError('GitHub rate limit reached; set GITHUB_TOKEN');
+    if (input === 'limited-token') throw new AtlasError('GitHub rate limit reached; try again after 2026-11-18 11:06 UTC');
     return open(input);
   },
-  scanOwner: (input) => scanOwner(input, { fetch: replay(acme()) }),
+  scanOwner: async (input, progress) => {
+    // Stops halfway, until the test lets it go on: the page's progress, as it is shown.
+    if (input === 'https://github.com/slow') {
+      progress?.({ stage: 'listing', page: 2 });
+      progress?.({ stage: 'scanning', done: 3, total: 10 });
+      progress?.({ stage: 'waiting', seconds: 45 });
+      await slow.promise;
+    }
+    if (input === 'https://github.com/listing' || input === 'https://github.com/scanning') {
+      progress?.(input.endsWith('listing') ? { stage: 'listing', page: 2 } : { stage: 'scanning', done: 3, total: 10 });
+      await halted.promise;
+    }
+    return scanOwner(input.replace(/\/(slow|listing|scanning)$/, '/acme'), { fetch: replay(acme()), progress });
+  },
   log: (text) => logged.push(text),
 });
 const address = await listen(server, 0);
@@ -252,7 +270,7 @@ test('serve with a bad port → usage, exit code 1', async () => {
 // The page itself, in spec/web.md ("Page"): the real app.js, run in jsdom against this server.
 
 /** Opens the page at `path` and waits for the scan to show; returns its window. */
-async function page(t: TestContext, path: string) {
+async function page(t: TestContext, path: string, { result = true, until = '#filter, .state, .error' } = {}) {
   const html = await (await get('/')).text();
   const { window } = new JSDOM(html, { url: `${address}${path}` });
   const names = ['window', 'document', 'location', 'history', 'Node', 'Event'] as const;
@@ -273,8 +291,8 @@ async function page(t: TestContext, path: string) {
   for (const file of ['app.js', 'filter.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
   await import(pathToFileURL(join(scripts, 'app.js')).href);
   const document = window.document;
-  for (let i = 0; i < 200 && !document.getElementById('filter') && !document.querySelector('.state, .error'); i++) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(document.getElementById('filter'), document.getElementById('result')?.textContent ?? '');
+  for (let i = 0; i < 200 && !document.querySelector(until); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  if (result) assert.ok(document.getElementById('filter'), document.getElementById('result')?.textContent ?? '');
   return window;
 }
 
@@ -377,4 +395,79 @@ test('/filter.js: the CLI’s filter module, served to the page', async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /^text\/javascript/);
   assert.equal(await response.text(), readFileSync(new URL('../src/core/filter.js', import.meta.url), 'utf8'));
+});
+
+test('the rate limit on the page: restart with a token only when the server has none', async (t) => {
+  const advice = async (input: string) => {
+    const window = await page(t, `/?input=${input}`, { result: false });
+    return window.document.querySelector('.error')?.textContent ?? '';
+  };
+  const without = await advice('limited-no-token');
+  assert.match(without, /GitHub rate limit reached; set GITHUB_TOKEN/);
+  assert.match(without, /Restart the server with a token, GITHUB_TOKEN=… \.\/skill-atlas serve/);
+  const withToken = await advice('limited-token');
+  assert.match(withToken, /try again after 2026-11-18 11:06 UTC/);
+  assert.doesNotMatch(withToken, /Restart the server with a token/);
+  assert.match(withToken, /The server has a token already: wait as the message says, then scan again\./);
+});
+
+/** `/api/scan` as the page asks for it: a stream of JSON lines. */
+async function lines(input: string) {
+  const response = await get(`/api/scan?input=${encodeURIComponent(input)}`, { headers: { Accept: 'application/x-ndjson, application/json' } });
+  return { response, lines: (await response.text()).trim().split('\n').map((line) => JSON.parse(line)) };
+}
+
+test('an owner, streamed: progress lines, then the same result as the JSON answer', async () => {
+  const { response, lines: answer } = await lines('https://github.com/acme');
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') ?? '', /^application\/x-ndjson/);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const last = answer.pop();
+  assert.deepEqual(last, { result: await (await scan('https://github.com/acme')).json() });
+  assert.deepEqual(answer.slice(0, 3), [
+    { progress: { stage: 'listing', page: 1 } },
+    { progress: { stage: 'listing', page: 2 } },
+    { progress: { stage: 'scanning', done: 0, total: 6 } },
+  ]);
+  assert.deepEqual(answer.at(-1), { progress: { stage: 'scanning', done: 6, total: 6 } });
+});
+
+test('an owner, streamed, that fails → { error } as the last line, the CLI’s message', async () => {
+  const { response, lines: answer } = await lines('https://github.com/acme/tree/main');
+  assert.equal(response.status, 200);
+  assert.deepEqual(answer, [
+    { error: "…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: https://github.com/acme/tree/main" },
+  ]);
+  // A single repository is one JSON answer, whatever the page accepts.
+  const single = await get(`/api/scan?input=${encodeURIComponent(FIXTURE)}`, { headers: { Accept: 'application/x-ndjson, application/json' } });
+  assert.match(single.headers.get('content-type') ?? '', /^application\/json/);
+});
+
+test('the page while an owner is scanned: the bar, how many of how many, the wait counting down; then the result', async (t) => {
+  const window = await page(t, `/?input=${encodeURIComponent('https://github.com/slow')}`, { result: false, until: '.progress:not([hidden])' });
+  const document = window.document;
+  const label = () => document.querySelector('.progress-label')?.textContent;
+  const bar = document.querySelector('progress') as HTMLProgressElement;
+  assert.ok(bar, 'a progress bar');
+  // The wait came last; the bar stays at 3 of 10.
+  assert.match(label() ?? '', /^GitHub asked to slow down: going on in 4[45] s$/);
+  assert.equal(bar.value, 3);
+  assert.equal(bar.max, 10);
+  slow.resolve();
+  for (let i = 0; i < 200 && !document.getElementById('filter'); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(document.getElementById('filter'), 'the result');
+  assert.equal(document.querySelector('progress'), null, 'the bar is gone');
+  assert.match(document.querySelector('.summary')?.textContent ?? '', /acme/);
+});
+
+test('the page’s progress: listing (the bar moving, no end known), then scanned d of n', async (t) => {
+  const listing = await page(t, `/?input=${encodeURIComponent('https://github.com/listing')}`, { result: false, until: '.progress:not([hidden])' });
+  assert.equal(listing.document.querySelector('.progress-label')?.textContent, 'Listing the repositories… (page 2)');
+  assert.equal(listing.document.querySelector('progress')?.hasAttribute('value'), false);
+
+  const scanning = await page(t, `/?input=${encodeURIComponent('https://github.com/scanning')}`, { result: false, until: '.progress:not([hidden])' });
+  assert.equal(scanning.document.querySelector('.progress-label')?.textContent, 'Scanned 3 of 10 repositories');
+  const bar = scanning.document.querySelector('progress') as HTMLProgressElement;
+  assert.deepEqual([bar.value, bar.max], [3, 10]);
+  halted.resolve();
 });

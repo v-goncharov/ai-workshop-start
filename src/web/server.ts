@@ -5,14 +5,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { AtlasError } from '../core/errors.ts';
 import { parseGitHubOwner } from '../core/github.ts';
 import { firstSentence, skillLink } from '../core/model.ts';
-import type { OwnerResult } from '../core/owner.ts';
+import type { OwnerResult, Progress } from '../core/owner.ts';
 import { scan, type ScanResult, type Source } from '../core/scan.ts';
 
 export type WebOptions = {
   /** Opens what the user asked to scan, as the CLI does. */
   open(input: string): Promise<Source>;
   /** Scans every repository of a GitHub organization or user, as the CLI does. */
-  scanOwner?(input: string): Promise<OwnerResult>;
+  scanOwner?(input: string, progress?: (progress: Progress) => void): Promise<OwnerResult>;
   /** Unexpected failures, for the server log; the page gets a short message. */
   log?(text: string): void;
 };
@@ -32,6 +32,11 @@ export type OwnerScanResponse = {
   warnings: string[];
 };
 
+/** One line of `/api/scan`'s answer for an owner, streamed: how far it is, then the result or the error. */
+export type OwnerScanLine = { progress: Progress } | { result: OwnerScanResponse } | { error: string };
+
+const UNEXPECTED = 'Something went wrong on the server. The terminal running skill-atlas serve has the details.';
+
 /** The page's files, relative to this one. The filter is the CLI's own module. */
 const STATIC: Record<string, { file: string; type: string }> = {
   '/': { file: './static/index.html', type: 'text/html; charset=utf-8' },
@@ -44,7 +49,7 @@ export function createWebServer(options: WebOptions): Server {
   return createServer((request, response) => {
     handle(request, response, options).catch((error) => {
       options.log?.(`Unexpected error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-      if (!response.headersSent) json(response, 500, { error: 'Something went wrong on the server. The terminal running skill-atlas serve has the details.' });
+      if (!response.headersSent) json(response, 500, { error: UNEXPECTED });
       else response.end();
     });
   });
@@ -91,7 +96,10 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
     const input = url.searchParams.get('input')?.trim();
     if (!input) return json(response, 400, { error: 'Enter a GitHub URL or a directory path.' });
     try {
-      if (parseGitHubOwner(input) && options.scanOwner) return json(response, 200, toOwnerResponse(await options.scanOwner(input)));
+      if (parseGitHubOwner(input) && options.scanOwner) {
+        if (request.headers.accept?.includes(NDJSON)) return await streamOwner(response, input, options.scanOwner, options.log);
+        return json(response, 200, toOwnerResponse(await options.scanOwner(input)));
+      }
       return json(response, 200, toResponse(await scan(await options.open(input))));
     } catch (error) {
       if (error instanceof AtlasError) return json(response, 400, { error: error.message });
@@ -104,6 +112,32 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   const body = await readFile(new URL(asset.file, import.meta.url));
   response.writeHead(200, { 'content-type': asset.type, 'cache-control': 'no-cache', ...SECURITY });
   response.end(request.method === 'HEAD' ? undefined : body);
+}
+
+const NDJSON = 'application/x-ndjson';
+
+/**
+ * An owner scan takes minutes for a large organization: its progress, one JSON line each time, then the result or
+ * the error as the last line. The status is sent first, so an error is a line too, not a status.
+ */
+async function streamOwner(
+  response: ServerResponse,
+  input: string,
+  scanOwner: NonNullable<WebOptions['scanOwner']>,
+  log: WebOptions['log'],
+) {
+  response.writeHead(200, { 'content-type': `${NDJSON}; charset=utf-8`, 'cache-control': 'no-store', ...SECURITY });
+  const send = (line: OwnerScanLine) => response.write(`${JSON.stringify(line)}\n`);
+  try {
+    send({ result: toOwnerResponse(await scanOwner(input, (progress) => send({ progress }))) });
+  } catch (error) {
+    if (error instanceof AtlasError) send({ error: error.message });
+    else {
+      log?.(`Unexpected error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      send({ error: UNEXPECTED });
+    }
+  }
+  response.end();
 }
 
 function toOwnerResponse({ owner, scanned, repositories, skipped, warnings }: OwnerResult): OwnerScanResponse {

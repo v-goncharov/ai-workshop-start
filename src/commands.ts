@@ -5,14 +5,14 @@ import { SKILL_ROOTS } from './core/find.ts';
 import { parseGitHubOwner } from './core/github.ts';
 import { filterWords, matchesFilter } from './core/filter.js';
 import { firstSentence, skillLink, type Repository, type Skill } from './core/model.ts';
-import type { OwnerResult } from './core/owner.ts';
+import type { OwnerResult, Progress } from './core/owner.ts';
 import { scan, type Source } from './core/scan.ts';
 
 export type Context = {
   /** Opens what the user asked to scan. */
   open(input: string): Promise<Source>;
   /** Scans every repository of a GitHub organization or user. */
-  scanOwner?(input: string): Promise<OwnerResult>;
+  scanOwner?(input: string, progress?: (progress: Progress) => void): Promise<OwnerResult>;
   print(text: string): void;
   /** Errors and warnings. */
   error(text: string): void;

@@ -239,6 +239,18 @@ button.link {
 }
 @keyframes pulse { to { opacity: 0.5; } }
 
+.progress { margin: 0 0 var(--space-4); max-width: 72ch; }
+.progress[hidden] { display: none; }
+.progress-label { margin: 0 0 var(--space-2); color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.progress progress {
+  display: block; width: 100%; height: 8px;
+  appearance: none; border: 0; border-radius: var(--radius);
+  background: var(--skeleton); color: var(--accent); accent-color: var(--accent);
+}
+.progress progress::-webkit-progress-bar { background: var(--skeleton); border-radius: var(--radius); }
+.progress progress::-webkit-progress-value { background: var(--accent); border-radius: var(--radius); transition: width 0.2s; }
+.progress progress::-moz-progress-bar { background: var(--accent); border-radius: var(--radius); }
+
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;

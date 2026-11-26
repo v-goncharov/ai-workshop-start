@@ -1,5 +1,5 @@
 import { AtlasError, GitHubError, RateLimitError } from './errors.ts';
-import { client, openRepository, parseGitHubOwner, type Client, type GitHubOptions } from './github.ts';
+import { client, openRepository, resetTime, parseGitHubOwner, type Client, type GitHubOptions } from './github.ts';
 import { scan, type ScanResult } from './scan.ts';
 
 /** Every repository of an organization or a user, scanned. */
@@ -14,9 +14,17 @@ export type OwnerResult = {
   warnings: string[];
 };
 
+/** How far an owner scan is: listing the repositories, scanning them, or waiting for GitHub's secondary rate limit. */
+export type Progress =
+  | { stage: 'listing'; page: number }
+  | { stage: 'scanning'; done: number; total: number }
+  | { stage: 'waiting'; seconds: number };
+
 export type OwnerOptions = GitHubOptions & {
   /** How many repositories are scanned at once. */
   concurrency?: number;
+  /** Told as the scan goes: each page listed, each repository scanned, each wait. */
+  progress?: (progress: Progress) => void;
 };
 
 /** The least a repository's scan asks the API for: its commit and its top-level tree. */
@@ -38,8 +46,11 @@ export async function scanOwner(input: string, options: OwnerOptions): Promise<O
   if (name.tree) {
     throw new AtlasError(`…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: ${input}`);
   }
-  const github = client(options);
-  const listed = await listRepositories(github, name.owner);
+  const progress = options.progress ?? (() => {});
+  const github = client({ ...options, paused: (ms) => progress({ stage: 'waiting', seconds: Math.ceil(ms / 1000) }) });
+  // A user's first page is asked for twice, after /orgs/ answers 404: told once.
+  let pages = 0;
+  const listed = await listRepositories(github, name.owner, (page) => page > pages && progress({ stage: 'listing', page: (pages = page) }));
   const id = listed[0]?.full_name.split('/')[0] ?? name.owner;
   const forks = listed.filter((repository) => repository.fork);
   const archived = listed.filter((repository) => !repository.fork && repository.archived);
@@ -49,15 +60,21 @@ export async function scanOwner(input: string, options: OwnerOptions): Promise<O
     const { resources } = await github.fresh<{ resources: { core: { remaining: number; reset: number } } }>(`${API}/rate_limit`);
     const { remaining, reset } = resources.core;
     if (remaining >= count * REQUESTS_PER_REPOSITORY) return undefined;
-    const next = options.token ? `try again after ${new Date(reset * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'set GITHUB_TOKEN';
+    const next = options.token ? `try again after ${resetTime(reset)}` : 'set GITHUB_TOKEN';
     return `${id} has ${plural(count, 'repository', 'repositories')} to scan, but only ${remaining} GitHub API requests remain (at least ${REQUESTS_PER_REPOSITORY} for each); ${next}`;
   };
   const before = await tooMany(candidates.length);
   if (before) throw new RateLimitError(before);
 
   let results: Awaited<ReturnType<typeof scanOne>>[];
+  let done = 0;
+  progress({ stage: 'scanning', done, total: candidates.length });
   try {
-    results = await inTurns(candidates, options.concurrency ?? 4, (repository) => scanOne(github, repository));
+    results = await inTurns(candidates, options.concurrency ?? 4, async (repository) => {
+      const result = await scanOne(github, repository);
+      progress({ stage: 'scanning', done: ++done, total: candidates.length });
+      return result;
+    });
   } catch (error) {
     if (!(error instanceof RateLimitError)) throw error;
     // Hit midway: the same message as before scanning, with what is left now.
@@ -83,8 +100,8 @@ export async function scanOwner(input: string, options: OwnerOptions): Promise<O
  * Every page of `/orgs/<owner>/repos`; if the owner is not an organization, of `/users/<owner>/repos`, which has only
  * a user's public repositories, or of `/user/repos?affiliation=owner` when the token is that user's own, with their private ones.
  */
-async function listRepositories(github: Client, owner: string): Promise<Listed[]> {
-  const page = (path: string, number: number) => github.json<Listed[]>(`${API}/${path}per_page=${PAGE}&page=${number}`);
+async function listRepositories(github: Client, owner: string, listing: (page: number) => void): Promise<Listed[]> {
+  const page = (path: string, number: number) => (listing(number), github.json<Listed[]>(`${API}/${path}per_page=${PAGE}&page=${number}`));
   let path = `orgs/${encodeURIComponent(owner)}/repos?`;
   let first: Listed[];
   try {

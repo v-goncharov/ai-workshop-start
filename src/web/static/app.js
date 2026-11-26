@@ -97,25 +97,94 @@ async function scanInput(value) {
   const started = performance.now();
   try {
     let response;
+    let body;
+    const notAnswering = () =>
+      showError(value, 'The Skill Atlas server is not answering.', 'Check that skill-atlas serve is still running in your terminal, then scan again.');
     try {
-      response = await fetch(`/api/scan?input=${encodeURIComponent(value)}`, { signal: controller.signal });
+      // An owner's scan answers line by line, its progress first; anything else, one JSON answer.
+      response = await fetch(`/api/scan?input=${encodeURIComponent(value)}`, {
+        signal: controller.signal,
+        headers: { Accept: 'application/x-ndjson, application/json' },
+      });
+      if (response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+        body = await readLines(response, (line) => !controller.signal.aborted && showProgress(line.progress));
+        body ??= { error: 'The server stopped answering before the scan finished.' };
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
-      return showError(value, 'The Skill Atlas server is not answering.', 'Check that skill-atlas serve is still running in your terminal, then scan again.');
+      return notAnswering();
     }
-    const body = await response.json().catch(() => ({ error: `The server answered ${response.status} without details.` }));
+    body ??= await response.json().catch(() => ({ error: `The server answered ${response.status} without details.` }));
     if (controller.signal.aborted) return;
-    if (!response.ok) return showError(value, body.error, advice(body.error));
+    if (body.error !== undefined) return showError(value, body.error, advice(body.error));
     if (body.owner) showOwnerResult(body, performance.now() - started);
     else showResult(body, performance.now() - started);
   } finally {
-    if (current === controller) setBusy(false);
+    if (current === controller) {
+      setBusy(false);
+      stopCountdown();
+    }
+  }
+}
+
+/** Each JSON line of a streamed answer: progress lines to `onProgress`; the last one's result, or `{ error }`. */
+async function readLines(response, onProgress) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffered = '';
+  let last;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += value;
+    const lines = buffered.split('\n');
+    buffered = lines.pop();
+    for (const text of lines.filter(Boolean)) {
+      const line = JSON.parse(text);
+      if (line.progress) onProgress(line);
+      else last = line.error !== undefined ? { error: line.error } : line.result;
+    }
+  }
+  return last;
+}
+
+let countdown; // the timer of a wait for GitHub's rate limit
+
+function stopCountdown() {
+  clearInterval(countdown);
+  countdown = undefined;
+}
+
+/** How far an owner's scan is, above the skeleton rows: the bar, and what it is doing. */
+function showProgress(progress) {
+  const bar = result.querySelector('progress');
+  const label = result.querySelector('.progress-label');
+  if (!bar || !label) return;
+  result.querySelector('.progress').hidden = false;
+  stopCountdown();
+  if (progress.stage === 'listing') {
+    bar.removeAttribute('value');
+    label.textContent = progress.page > 1 ? `Listing the repositories… (page ${progress.page})` : 'Listing the repositories…';
+  } else if (progress.stage === 'scanning') {
+    bar.max = Math.max(progress.total, 1);
+    bar.value = progress.done;
+    label.textContent = `Scanned ${progress.done} of ${progress.total} ${progress.total === 1 ? 'repository' : 'repositories'}`;
+  } else if (progress.stage === 'waiting') {
+    // The bar stays where it is: GitHub asked to slow down, the scan goes on after the wait.
+    const until = Date.now() + progress.seconds * 1000;
+    const tick = () => {
+      const left = Math.ceil((until - Date.now()) / 1000);
+      label.textContent = left > 0 ? `GitHub asked to slow down: going on in ${left} s` : 'GitHub asked to slow down: going on…';
+      if (left <= 0) stopCountdown();
+    };
+    tick();
+    countdown = setInterval(tick, 1000);
   }
 }
 
 /** What to do next, for the errors the scan explains. */
 function advice(message = '') {
-  if (/rate limit|API requests remain/i.test(message)) return ['Restart the server with a token, ', h('code', {}, 'GITHUB_TOKEN=… ./skill-atlas serve'), ', then scan again.'];
+  if (/set GITHUB_TOKEN/i.test(message)) return ['Restart the server with a token, ', h('code', {}, 'GITHUB_TOKEN=… ./skill-atlas serve'), ', then scan again.'];
+  if (/rate limit|API requests remain/i.test(message)) return 'The server has a token already: wait as the message says, then scan again.';
   if (/Cannot reach GitHub/i.test(message)) return 'Check your network connection, then scan again.';
   if (/works only for a repository/i.test(message)) return 'Remove /tree/… to scan every repository of the owner on its default branch, or add a repository name.';
   if (/^Owner not found/i.test(message)) return 'Check the organization or user name.';
@@ -139,6 +208,11 @@ function showLoading() {
       h('div', {}, h('span', { class: 'skeleton title' }), h('span', { class: 'skeleton meta-line' })),
     ),
     h('p', { class: 'visually-hidden' }, 'Scanning the repository…'),
+    // Shown once an owner's scan says how far it is.
+    h('div', { class: 'progress', hidden: true },
+      h('p', { class: 'progress-label', id: 'progress-label' }),
+      h('progress', { 'aria-labelledby': 'progress-label' }),
+    ),
     table(rows, true),
   );
 }

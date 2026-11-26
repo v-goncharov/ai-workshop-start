@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import type { Fetch } from '../src/core/github.ts';
+import { scanOwner, type Progress } from '../src/core/owner.ts';
 import { replay, type Recorded, type Recording } from '../src/core/replay.ts';
 import { acme, atlas, budget, CLI, listed, recordRepository } from './helpers.ts';
 
@@ -288,6 +289,67 @@ test('rate limit hit midway → the same message, exit code 1, no partial output
   assert.equal(scanned.code, 1);
   assert.equal(scanned.stdout, '');
   assert.equal(scanned.stderr, 'acme has 6 repositories to scan, but only 0 GitHub API requests remain (at least 2 for each); set GITHUB_TOKEN');
+});
+
+test('the secondary rate limit midway → waited out; the scan goes on as if nothing happened', async () => {
+  const recorded = replay(acme());
+  let refused = 0;
+  const waits: number[] = [];
+  const fetch: Fetch = (url, init) => {
+    if (url === 'https://api.github.com/repos/acme/api/commits/main' && refused++ === 0) {
+      return Promise.resolve(new Response(JSON.stringify({ message: 'You have exceeded a secondary rate limit.' }), { status: 403, headers: { 'retry-after': '60' } }));
+    }
+    return recorded(url, init);
+  };
+  const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch, wait: async (ms) => void waits.push(ms) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ACME_STDOUT);
+  assert.deepEqual(waits, [60_000]);
+});
+
+test('the secondary rate limit midway, still refused → its own message, not the budget, exit code 1, no partial output', async () => {
+  const recorded = replay(acme());
+  const fetch: Fetch = (url, init) =>
+    url === 'https://api.github.com/repos/acme/api/commits/main'
+      ? Promise.resolve(new Response(JSON.stringify({ message: 'You have exceeded a secondary rate limit.' }), { status: 403 }))
+      : recorded(url, init);
+  const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch, token: 'secret', wait: async () => {} });
+  assert.equal(scanned.code, 1);
+  assert.equal(scanned.stdout, '');
+  assert.equal(scanned.stderr, 'GitHub refused requests again and again for coming too fast (its secondary rate limit); try again in a few minutes');
+});
+
+test('progress: each page listed, then scanned 0 of n, one more after each repository; each wait for the secondary limit', async () => {
+  const seen: Progress[] = [];
+  const recorded = replay(acme());
+  let refused = 0;
+  const fetch: Fetch = (url, init) => {
+    if (url === 'https://api.github.com/repos/acme/api/commits/main' && refused++ === 0) {
+      return Promise.resolve(new Response(JSON.stringify({ message: 'You have exceeded a secondary rate limit.' }), { status: 403, headers: { 'retry-after': '45' } }));
+    }
+    return recorded(url, init);
+  };
+  await scanOwner('https://github.com/acme', { fetch, wait: async () => {}, progress: (progress) => seen.push(progress) });
+  assert.deepEqual(seen.slice(0, 3), [
+    { stage: 'listing', page: 1 },
+    { stage: 'listing', page: 2 },
+    { stage: 'scanning', done: 0, total: 6 },
+  ]);
+  assert.deepEqual(
+    seen.filter((progress) => progress.stage === 'scanning').map((progress) => progress.done),
+    [0, 1, 2, 3, 4, 5, 6],
+  );
+  assert.deepEqual(seen.filter((progress) => progress.stage === 'waiting'), [{ stage: 'waiting', seconds: 45 }]);
+});
+
+test('progress for a user: the first page told once, though /orgs/ is asked first', async () => {
+  const seen: Progress[] = [];
+  const recording: Recording = {
+    ...NOT_AN_ORGANIZATION,
+    'https://api.github.com/users/jane/repos?per_page=100&page=1': { status: 200, body: [] },
+  };
+  await scanOwner('https://github.com/jane', { fetch: replay({ ...recording, ...budget(5000) }), progress: (progress) => seen.push(progress) });
+  assert.deepEqual(seen, [{ stage: 'listing', page: 1 }, { stage: 'scanning', done: 0, total: 0 }]);
 });
 
 test('repositories are scanned concurrently, a few at a time; the order of the output stays the same', async () => {

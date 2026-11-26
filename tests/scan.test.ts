@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { openGitHub, type Fetch } from '../src/core/github.ts';
+import { client, openGitHub, type Fetch } from '../src/core/github.ts';
 import { scan } from '../src/core/scan.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay } from '../src/core/replay.ts';
@@ -92,6 +92,94 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
   await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: limited }), {
     message: 'GitHub rate limit reached; set GITHUB_TOKEN',
   });
+});
+
+/** What GitHub answers for its secondary rate limit: budget left, too many requests at once. */
+const SECONDARY = { message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.' };
+
+/** Answers each request for a URL with the next of `answers`, the last one again once they run out; counts the requests. */
+function inTurn(answers: { status: number; body: unknown; headers?: Record<string, string> }[]) {
+  let asked = 0;
+  const fetch: Fetch = async () => {
+    const { status, body, headers } = answers[Math.min(asked++, answers.length - 1)];
+    return new Response(JSON.stringify(body), { status, headers });
+  };
+  return { fetch, asked: () => asked };
+}
+
+test('the hourly budget used up, with a token → when it resets, never "in a minute"', async () => {
+  const exceeded = { message: 'API rate limit exceeded for user ID 1.' };
+  const withReset = inTurn([{ status: 403, body: exceeded, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1795000000' } }]);
+  await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: withReset.fetch, token: 'test' }), {
+    message: 'GitHub rate limit reached; try again after 2026-11-18 11:06 UTC',
+  });
+  assert.equal(withReset.asked(), 1, 'not tried again');
+  const noReset = inTurn([{ status: 403, body: exceeded }]);
+  await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: noReset.fetch, token: 'test' }), {
+    message: 'GitHub rate limit reached; try again when it resets, within the hour',
+  });
+});
+
+test('the secondary rate limit → wait retry-after, then the same request again', async () => {
+  const waits: number[] = [];
+  const github = inTurn([
+    { status: 403, body: SECONDARY, headers: { 'retry-after': '30', 'x-ratelimit-remaining': '4000' } },
+    { status: 200, body: { full_name: 'JetBrains/MPS', default_branch: 'master' } },
+  ]);
+  const answer = await client({ fetch: github.fetch, token: 'test', wait: async (ms) => void waits.push(ms) }).json<{ full_name: string }>(
+    'https://api.github.com/repos/JetBrains/MPS',
+  );
+  assert.equal(answer.full_name, 'JetBrains/MPS');
+  assert.deepEqual(waits, [30_000]);
+  assert.equal(github.asked(), 2);
+
+  // A 429 with budget left and no message is the secondary limit too.
+  const bare = inTurn([{ status: 429, body: {}, headers: { 'retry-after': '1' } }, { status: 200, body: { ok: true } }]);
+  assert.deepEqual(await client({ fetch: bare.fetch, wait: async () => {} }).json('https://api.github.com/x'), { ok: true });
+});
+
+test('the secondary rate limit without retry-after → 1 minute, then 2; still refused → a message, exit code 1', async () => {
+  const waits: number[] = [];
+  const github = inTurn([{ status: 403, body: SECONDARY }]);
+  await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: github.fetch, token: 'test', wait: async (ms) => void waits.push(ms) }), {
+    message: 'GitHub refused requests again and again for coming too fast (its secondary rate limit); try again in a few minutes',
+  });
+  assert.deepEqual(waits, [60_000, 120_000]);
+  assert.equal(github.asked(), 3);
+});
+
+test('the secondary rate limit with retry-after over 5 minutes → stop at once', async () => {
+  const waits: number[] = [];
+  const github = inTurn([{ status: 429, body: SECONDARY, headers: { 'retry-after': '301' } }]);
+  await assert.rejects(client({ fetch: github.fetch, wait: async (ms) => void waits.push(ms) }).json('https://api.github.com/x'), {
+    message: /its secondary rate limit\); try again in a few minutes$/,
+  });
+  assert.deepEqual(waits, []);
+});
+
+test('the secondary rate limit pauses every request of the scan, not just the refused one', async () => {
+  const asked: string[] = [];
+  let refused = false;
+  const fetch: Fetch = async (url) => {
+    asked.push(url);
+    if (url.endsWith('/a') && !refused) {
+      refused = true;
+      return new Response(JSON.stringify(SECONDARY), { status: 403, headers: { 'retry-after': '60' } });
+    }
+    return new Response('{}', { status: 200 });
+  };
+  let resume = () => {};
+  const paused = new Promise<void>((resolve) => (resume = resolve));
+  const github = client({ fetch, wait: () => paused });
+  const a = github.json('https://api.github.com/a');
+  while (!refused) await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const b = github.json('https://api.github.com/b');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(asked, ['https://api.github.com/a'], 'nothing asked during the pause');
+  resume();
+  await Promise.all([a, b]);
+  assert.deepEqual(asked.sort(), ['https://api.github.com/a', 'https://api.github.com/a', 'https://api.github.com/b']);
 });
 
 test('…/tree/<commit> scans that commit', async () => {

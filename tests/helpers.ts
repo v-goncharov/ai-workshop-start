@@ -6,7 +6,7 @@ import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from '../src/commands.ts';
 import { openGitHub, parseGitHubUrl, type GitHubOptions } from '../src/core/github.ts';
-import { scanOwner } from '../src/core/owner.ts';
+import { scanOwner, type Progress } from '../src/core/owner.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
 import { openDirectory } from '../src/local.ts';
 
@@ -55,7 +55,7 @@ export const open = (input: string) =>
 export function contextFor(github: GitHubOptions) {
   return {
     open: (input: string) => (parseGitHubUrl(input) ? openGitHub(input, github) : openDirectory(input)),
-    scanOwner: (input: string) => scanOwner(input, github),
+    scanOwner: (input: string, progress?: (progress: Progress) => void) => scanOwner(input, { ...github, progress }),
   };
 }
 

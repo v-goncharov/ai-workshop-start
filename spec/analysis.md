@@ -15,6 +15,14 @@ Skill: id = `repo:path`, name, description, commit
 - The link pins the *scanned commit*
 - Malformed front matter → a *warning*, the scan goes on
 - Unreachable repository → a clear message, exit code 1
+- **GitHub's rate limits**, for a repository and an owner alike:
+  - The hourly budget used up (`x-ratelimit-remaining: 0`, or "API rate limit exceeded") → stop:
+    `GitHub rate limit reached; set GITHUB_TOKEN`; with a token: `try again after <yyyy-mm-dd hh:mm> UTC`
+    (from `x-ratelimit-reset`), exit code 1. Never "in a minute": the budget resets once an hour
+  - The **secondary** limit, for too many requests in a short time (403 or 429, "secondary rate limit", or budget left) →
+    *every* request of the scan waits `retry-after` seconds, else 1 minute, then 2; the refused one is tried again.
+    Still refused after 3 tries, or `retry-after` over 5 minutes → stop:
+    `GitHub refused requests again and again for coming too fast (its secondary rate limit); try again in a few minutes`, exit code 1
 ## Which SKILL.md counts
 Only the repository's **own** skills: `<skill root>/<name>/SKILL.md`.
 Skill roots: `.agents/skills`, `.claude/skills`, `.github/skills`
@@ -49,7 +57,8 @@ the same skill roots, edge cases, duplicates and links pinned to its commit.
 - **Rate limit**: a repository takes at least 2 API requests. Before scanning, if the remaining budget
   (`/rate_limit`, which costs none) is smaller → stop: `<owner> has <n> repositories to scan, but only <r> GitHub API requests remain
   (at least 2 for each); set GITHUB_TOKEN`, `<n>` without forks and archived ones (with a token: `try again after <yyyy-mm-dd hh:mm> UTC`, when the limit resets), exit code 1.
-  Hitting the limit midway → the same message, exit code 1, *no partial output*
+  Hitting the limit midway → the same message, exit code 1, *no partial output*.
+  The [secondary limit](#details) midway is waited out; if it stops the scan, its own message (the budget is not the problem)
 - Repositories are scanned **concurrently**, 4 at a time; the order of the output stays the same
 ## End-to-end
 The edge cases above, on the real repositories, each pinned to a commit: `tests/e2e`.

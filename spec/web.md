@@ -19,8 +19,11 @@ A scan asked for by another site (`Sec-Fetch-Site` neither `same-origin` nor `no
 ## States
 - **Idle**: what is scanned, and one example
 - **Empty field** → "Enter a GitHub URL or a directory path.", no request
-- **Loading**: skeleton rows in the table's layout
-- **Error**: the CLI's message and what to do next (rate limit → `GITHUB_TOKEN`); *Scan again*
+- **Loading**: skeleton rows in the table's layout. An **owner**'s scan takes minutes, so above them a *progress bar* and what it does:
+  `Listing the repositories… (page <n>)` (the bar moving, no end known), `Scanned <d> of <n> repositories` (the bar at d of n),
+  `GitHub asked to slow down: going on in <s> s`, counting down each second, the bar where it was
+- **Error**: the CLI's message and what to do next (rate limit without a token → restart with `GITHUB_TOKEN`;
+  with one, the message says when to try again → wait); *Scan again*
 - **No skills** (in a repository, or in all of an owner's): which folders count
 - **Warnings**: listed above the table, as the CLI prints them to stderr
 - **No filter match**: "No skills match “<words>”", with a way to clear the filter
@@ -30,6 +33,10 @@ each skill: `name`, `path`, `summary` (the first sentence), `description`, `link
 An owner URL → `200` `{ owner, repositories, skipped, warnings }`: `owner` is `{ id, url, scanned }`
 (`scanned`: how many repositories were scanned); `repositories`, those with skills only, sorted by name, each `{ repository, skills }` as above;
 `skipped` is `{ forks, archived, empty }`; `warnings` as the CLI prints them, without `warning: `.
+- An owner URL with `Accept: application/x-ndjson` (the page asks so) → `200` `application/x-ndjson`, one JSON object per line
+  as the scan goes: `{ progress }`, where `progress` is `{ stage: "listing", page }`, `{ stage: "scanning", done, total }` (once with `done` 0,
+  then after each repository; `total` without forks and archived ones) or `{ stage: "waiting", seconds }` (GitHub's [secondary rate limit](analysis.md#details));
+  then the last line, `{ result }` (the owner's answer above) or `{ error }` (the CLI's message, or the short one for an unexpected failure)
 - No input, or the CLI's error (unreachable repository, rate limit…) → `400` `{ error }`, the CLI's message
 - An unexpected failure → `500` `{ error }`, a short message; the details go to the server's stderr
 - `/filter.js`: the CLI's filter module, `src/core/filter.js`, as the page loads it
