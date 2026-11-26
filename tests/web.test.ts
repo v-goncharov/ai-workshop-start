@@ -434,10 +434,11 @@ test('no motion under prefers-reduced-motion: what moves is only in the no-prefe
   const still = css.slice(0, start) + css.slice(end);
   // Outside the block: no animation, no transition of position or transform, no hover or press that moves anything.
   assert.doesNotMatch(still, /animation\s*:/);
-  assert.doesNotMatch(still, /transition\s*:[^;}]*\b(left|transform)\b/);
+  assert.doesNotMatch(still, /transition\s*:[^;}]*\b(left|width|transform)\b/);
   assert.doesNotMatch(still, /:(hover|active)[^{]*\{[^}]*transform\s*:\s*(?!none)/);
-  // Inside it: the alpaca slides to d of n, the crest tilts on hover.
+  // Inside it: the alpaca and the bar slide to d of n, the crest tilts on hover.
   assert.match(motion, /\.trotter \{ transition: left /);
+  assert.match(motion, /::-webkit-progress-value \{ transition: width /);
   assert.match(motion, /\.crest:hover \.alpaca \{ transform: /);
 });
 

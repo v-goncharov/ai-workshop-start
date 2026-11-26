@@ -383,10 +383,10 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   background: var(--skeleton); color: var(--accent); accent-color: var(--accent);
 }
 .progress progress::-webkit-progress-bar { background: var(--skeleton); border-radius: 999px; }
-.progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--gold), var(--accent-bright)); border-radius: 999px; transition: width 0.3s; }
+.progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--gold), var(--accent-bright)); border-radius: 999px; }
 .progress progress::-moz-progress-bar { background: linear-gradient(90deg, var(--gold), var(--accent-bright)); border-radius: 999px; }
 
-/* Motion only for those who don't ask for less: under reduced motion the alpaca jumps to d of n and the crest and buttons stay still. */
+/* Motion only for those who don't ask for less: under reduced motion the alpaca and the bar jump to d of n and the crest and buttons stay still. */
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out; }
   button.primary:hover:not(:disabled) { transform: translateY(-1px); }
@@ -394,6 +394,7 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   .crest .alpaca { transition: transform 300ms ease-out; }
   .crest:hover .alpaca { transform: rotate(-6deg) translateY(-2px); }
   .trotter { transition: left 300ms ease-out; }
+  .progress progress::-webkit-progress-value { transition: width 0.3s; }
   .skeleton { animation: pulse 1.2s ease-out infinite alternate; }
   .idle .hero { animation: sway 5s ease-in-out infinite alternate; transform-origin: 50% 100%; }
   .trotter use { animation: trot 0.45s ease-in-out infinite alternate; }
