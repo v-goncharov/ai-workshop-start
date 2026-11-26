@@ -424,6 +424,23 @@ test('the alpaca stands by an error and by "No skills"', async (t) => {
   assert.ok(empty.document.querySelector('.state svg.alpaca use[href="#alpaca"]'), 'the alpaca by "No skills"');
 });
 
+test('no motion under prefers-reduced-motion: what moves is only in the no-preference block', async () => {
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  const start = css.indexOf('@media (prefers-reduced-motion: no-preference) {');
+  assert.ok(start >= 0, 'the no-preference block');
+  let end = css.indexOf('{', start) + 1;
+  for (let depth = 1; depth > 0; end++) depth += css[end] === '{' ? 1 : css[end] === '}' ? -1 : 0;
+  const motion = css.slice(start, end);
+  const still = css.slice(0, start) + css.slice(end);
+  // Outside the block: no animation, no transition of position or transform, no hover or press that moves anything.
+  assert.doesNotMatch(still, /animation\s*:/);
+  assert.doesNotMatch(still, /transition\s*:[^;}]*\b(left|transform)\b/);
+  assert.doesNotMatch(still, /:(hover|active)[^{]*\{[^}]*transform\s*:\s*(?!none)/);
+  // Inside it: the alpaca slides to d of n, the crest tilts on hover.
+  assert.match(motion, /\.trotter \{ transition: left /);
+  assert.match(motion, /\.crest:hover \.alpaca \{ transform: /);
+});
+
 /** `/api/scan` as the page asks for it: a stream of JSON lines. */
 async function lines(input: string) {
   const response = await get(`/api/scan?input=${encodeURIComponent(input)}`, { headers: { Accept: 'application/x-ndjson, application/json' } });
