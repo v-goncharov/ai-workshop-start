@@ -80,6 +80,51 @@ result.addEventListener('click', (event) => {
 });
 window.addEventListener('popstate', fromLocation);
 
+// The idle alpaca speaks: a joke in its bubble on each click, never the same twice in a row; gone after 5 s or on a click elsewhere.
+const JOKES = [
+  'What do you call an alpaca with no fleece? A bald-paca.',
+  'Why did the alpaca get the job? It was outstanding in its field.',
+  "I'd tell you a joke about llamas, but no llamas were consulted.",
+  'How do alpacas stay cool? Fleece conditioning.',
+  "What's an alpaca's favourite drink? A llama-tini. Shaken, not sheared.",
+  'Alpacas never worry. They know everything will be all wool in the end.',
+  'I asked the alpaca to fetch your skills. It said: no prob-llama.',
+  'What does an alpaca read? The SKILL.md, obviously. Impeccably.',
+];
+let lastJoke; // the index of the joke said last
+let hushing; // the timer that clears the bubble
+
+function speak(speaker) {
+  // One of the others: chance picks among all but the last joke.
+  let index = Math.floor(Math.random() * (lastJoke === undefined ? JOKES.length : JOKES.length - 1));
+  if (lastJoke !== undefined && index >= lastJoke) index++;
+  lastJoke = index;
+  const bubble = result.querySelector('.bubble');
+  if (bubble) bubble.textContent = JOKES[index];
+  // The wobble starts again on each joke (only where motion is allowed: style.css).
+  speaker.classList.remove('wobble');
+  void speaker.getBoundingClientRect();
+  speaker.classList.add('wobble');
+  clearTimeout(hushing);
+  hushing = setTimeout(hush, 5000);
+}
+
+function hush() {
+  clearTimeout(hushing);
+  const bubble = result.querySelector('.bubble');
+  if (bubble) bubble.textContent = '';
+  result.querySelector('.speaker')?.classList.remove('wobble');
+}
+
+document.addEventListener('click', (event) => {
+  const speaker = event.target.closest?.('button.speaker');
+  if (speaker) speak(speaker);
+  else hush();
+});
+result.addEventListener('animationend', (event) => {
+  if (event.animationName === 'wobble') event.target.closest('.speaker')?.classList.remove('wobble');
+});
+
 /** The page's address for a scan: `/?input=<it>`, and `&filter=<words>` unless the filter is blank. */
 function addressFor(value, words = '') {
   const filter = filterWords(words).join(' ');
