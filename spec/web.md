@@ -29,17 +29,8 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
 - The crest stays a plain link home (a click on it is no joke and no comment)
 - *The crest alpaca comments* on what the user does, in every state: the same speech bubble, beside the crest, `aria-live="polite"`.
   Each action has a *1 in 3 chance* of a comment, and at least *10 s* go by between two comments; a skipped action doesn't count.
-  The bubble is below the crest, its tail pointing up at it, while the crest is in view.
+  The bubble is below the crest, its tail pointing up at it, while the crest is in view; out of view, *the visitor* speaks (below).
   A comment replaces the one shown; it goes after 5 s (a click elsewhere leaves it); the crest wobbles, not under `prefers-reduced-motion`.
-  - *The visitor*: when the crest is *out of view* (scrolled past it, or more than half of it) as a comment starts, the same fancy
-    alpaca, at the crest's size, *peeks in from the bottom-left corner* of the window, away from the filter and the table's links,
-    with the bubble beside it, its tail pointing at the visitor. It goes with the comment, after 5 s;
-    a new comment while it is there replaces the text, and the visitor stays
-  - *Scrolling while it speaks*: the crest back in view → the visitor goes and the comment carries on below the crest, until its 5 s are up;
-    the crest out of view again → the visitor comes back
-  - The visitor is `aria-hidden` and takes no focus; clicks go through it, as through the bubble. The comment is announced once, by the bubble
-  - It slides up into view and back down; under `prefers-reduced-motion` it appears and goes without moving
-  - At phone width it fits, the bubble beside it inside the window
   It never takes focus, and the bubble lets clicks through. The lines are pre-written, in `phrases.js`: *at least 150*,
   at least 10 per category, *never the same one twice in a row*. A line may quote what the user did, shortened to 30 characters with `…`,
   always as text, never markup. The categories:
@@ -51,6 +42,15 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
     *cleared* (it had words, now none). Words unchanged since the last time, or the filter from the address → nothing
   - **Clicks**: a skill's file link (`{name}`), opening a *Full description* (`{name}`), a skill's copies, "Also in …" (`{name}`),
     and *the empty page*: a click on nothing that does anything (not a link, button, field, label, summary, the table or a bubble)
+- *The visitor*: when the crest is *out of view* (scrolled past it, or more than half of it) as a comment starts, the same fancy
+  alpaca, at the crest's size, *peeks in from the bottom-left corner* of the window, away from the filter and the table's links,
+  with the bubble beside it, its tail pointing at the visitor. It goes with the comment, after 5 s;
+  a new comment while it is there replaces the text, and the visitor stays
+  - *Scrolling while it speaks*: the crest back in view → the visitor goes and the comment carries on below the crest, until its 5 s are up;
+    the crest out of view again → the visitor comes back
+  - The visitor is `aria-hidden` and takes no focus; clicks go through it, as through the bubble. The comment is announced once, by the bubble
+  - It slides up into view and back down; under `prefers-reduced-motion` it appears and goes without moving
+  - At phone width it fits, the bubble beside it inside the window
 - Not in the CLI
 - The copy speaks of the alpaca (it is sent out, grazes, comes back); the texts quoted below stay as they are. No motion under `prefers-reduced-motion`
 ## States
