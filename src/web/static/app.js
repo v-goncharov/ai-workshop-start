@@ -2,6 +2,7 @@
 // idle, loading, error, result (with no skills, with warnings, filtered). All text goes in
 // through textContent; nothing from a repository becomes markup.
 import { filterWords, matchesFilter } from './filter.js';
+import { PHRASES } from './phrases.js';
 
 const form = document.getElementById('scan-form');
 const input = document.getElementById('input');
@@ -38,7 +39,10 @@ function alpaca(className = 'alpaca', symbol = 'alpaca') {
   return svg;
 }
 
+let typing; // the filter's wait for typing to stop, before the alpaca comments
+
 function show(...nodes) {
+  clearTimeout(typing);
   result.replaceChildren(...nodes.filter(Boolean));
 }
 
@@ -120,10 +124,80 @@ document.addEventListener('click', (event) => {
   const speaker = event.target.closest?.('button.speaker');
   if (speaker) speak(speaker);
   else hush();
+  if (event.target.closest) remarkOnClick(event.target);
 });
 result.addEventListener('animationend', (event) => {
   if (event.animationName === 'wobble') event.target.closest('.speaker')?.classList.remove('wobble');
 });
+
+// The crest alpaca comments on what the user does: about 1 in 3 actions, at least 10 s apart, a line from phrases.js,
+// never the same one twice in a row; gone after 5 s. What the user did goes in as text, shortened.
+const crest = document.querySelector('.crest');
+const comment = document.querySelector('.comment');
+const CHANCE = 1 / 3;
+const COOLDOWN = 10_000;
+let lastRemarkAt = -Infinity; // when the alpaca last commented
+let lastPhrase;
+let quieting; // the timer that clears its bubble
+
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+/** Shortened to 30 characters, `…` included. */
+function shorten(text) {
+  const characters = [...String(text)];
+  return characters.length > 30 ? `${characters.slice(0, 29).join('')}…` : characters.join('');
+}
+
+/** Maybe a comment from one of `categories` (chance picks), its placeholders filled from `values`. */
+function remark(categories, values = {}) {
+  categories = [categories].flat();
+  if (!comment || categories.length === 0 || Date.now() - lastRemarkAt < COOLDOWN) return;
+  if (Math.random() >= CHANCE) return;
+  const phrase = pick(PHRASES[pick(categories)].filter((line) => line !== lastPhrase));
+  lastPhrase = phrase;
+  lastRemarkAt = Date.now();
+  // Below the crest; at the top of the window when the page is scrolled past it, so it is always seen.
+  const { bottom, left } = crest.getBoundingClientRect();
+  comment.style.setProperty('--top', `${Math.max(bottom + 12, 12)}px`);
+  comment.style.setProperty('--left', `${Math.max(left, 12)}px`);
+  comment.textContent = phrase.replace(/\{(\w+)\}/g, (_, key) => (key === 'text' ? `“${shorten(values[key] ?? '')}”` : shorten(values[key] ?? '')));
+  crest.classList.remove('wobble');
+  void crest.getBoundingClientRect();
+  crest.classList.add('wobble');
+  clearTimeout(quieting);
+  quieting = setTimeout(() => {
+    comment.textContent = '';
+    crest.classList.remove('wobble');
+  }, 5000);
+}
+
+crest?.addEventListener('animationend', (event) => {
+  if (event.animationName === 'wobble') crest.classList.remove('wobble');
+});
+
+const isGitHub = (value) => /^(https?:\/\/)?(www\.)?github\.com(\/|$)/i.test(value);
+
+/** What is scanned, said shortly: without `https://github.com/`, or a directory's last name. */
+function scanned(value) {
+  if (isGitHub(value)) return value.replace(/^(https?:\/\/)?(www\.)?github\.com\/?/i, '').replace(/\/+$/, '') || 'GitHub';
+  return value.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || value;
+}
+
+/** A finished scan with skills: many or few, slow or fast; chance picks among those that apply. */
+function remarkOnScan(count, elapsed) {
+  const categories = [count >= 20 && 'scanMany', count <= 3 && 'scanFew', elapsed >= 10_000 && 'scanSlow', elapsed < 1000 && 'scanFast'].filter(Boolean);
+  remark(categories, { skills: plural(count, 'skill', 'skills'), time: took(elapsed) });
+}
+
+/** A skill's file, opening its full description, its copies; or a click on nothing that does anything. */
+function remarkOnClick(target) {
+  const name = target.closest('tr')?.querySelector('.name')?.textContent ?? '';
+  if (target.closest('a.path')) return remark('openFile', { name });
+  const summary = target.closest('.description summary');
+  if (summary) return summary.parentElement.open || remark('fullDescription', { name });
+  if (target.closest('.copies')) return remark('copies', { name });
+  if (!target.closest('a, button, input, select, textarea, label, summary, table, .bubble')) remark('emptyPage');
+}
 
 /** The page's address for a scan: `/?input=<it>`, and `&filter=<words>` unless the filter is blank. */
 function addressFor(value, words = '') {
@@ -149,6 +223,7 @@ async function scanInput(value) {
   const controller = (current = new AbortController());
   setBusy(true);
   showLoading();
+  remark(isGitHub(value) ? 'scanGitHub' : 'scanLocal', { input: scanned(value) });
   document.title = `Scanning ${value} · Skill Atlas`;
   const started = performance.now();
   try {
@@ -281,6 +356,7 @@ function showLoading() {
 
 function showError(value, message, next) {
   document.title = `Could not scan · Skill Atlas`;
+  remark('scanError', { input: scanned(value) });
   show(
     h('div', { class: 'error', role: 'alert' },
       alpaca(),
@@ -307,8 +383,12 @@ function plural(count, one, many) {
   return `${count.toLocaleString('en')} ${count === 1 ? one : many}`;
 }
 
+function took(elapsed) {
+  return elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`;
+}
+
 function scannedIn(elapsed) {
-  return ` · the alpaca was back in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`;
+  return ` · the alpaca was back in ${took(elapsed)}`;
 }
 
 /** The scanned commit, linked; or "local directory". */
@@ -344,9 +424,10 @@ function noSkills(where) {
  */
 function rowFilter(rows, total, noMatch, message = noMatch) {
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
+  let shown = 0;
   const applyFilter = () => {
     const words = filterWords(filter.value);
-    let shown = 0;
+    shown = 0;
     const sections = new Map();
     for (const { skill, row, section } of rows) {
       const match = matchesFilter(skill, words);
@@ -370,10 +451,20 @@ function rowFilter(rows, total, noMatch, message = noMatch) {
       const params = new URLSearchParams(location.search);
       const url = addressFor(params.get('input') ?? '', filter.value);
       if (location.pathname + location.search !== url) history.replaceState(null, '', url);
+      // The alpaca comments once typing stops, on words that changed.
+      clearTimeout(typing);
+      typing = setTimeout(() => {
+        const words = filterWords(filter.value).join(' ');
+        if (words === considered) return;
+        considered = words;
+        if (!words) return remark('filterCleared');
+        remark(shown > 0 ? 'filterMatch' : 'filterNoMatch', { text: words, skills: plural(shown, 'skill', 'skills') });
+      }, 800);
     },
   });
   // ?filter= from the address: a shared or reloaded filtered scan.
   filter.value = new URLSearchParams(location.search).get('filter') ?? '';
+  let considered = filterWords(filter.value).join(' '); // the words the alpaca last thought about
   applyFilter();
   return h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count);
 }
@@ -391,8 +482,10 @@ function showOwnerResult({ owner, repositories, skipped, warnings }, elapsed) {
   const heading = h('h1', {}, h('a', { href: owner.url }, owner.id));
 
   if (total === 0) {
+    remark('noSkills', { input: owner.id });
     return show(h('div', { class: 'summary' }, h('div', {}, heading, meta)), warningList(warnings), noSkills(`any repository of ${owner.id}`));
   }
+  remarkOnScan(total, elapsed);
 
   const rows = [];
   const sections = repositories.map(({ repository, skills }) => {
@@ -423,8 +516,10 @@ function showResult({ repository, skills, warnings }, elapsed) {
   const meta = h('p', { class: 'meta' }, plural(skills.length, 'skill', 'skills'), commitMeta(repository), scannedIn(elapsed));
 
   if (skills.length === 0) {
+    remark('noSkills', { input: repository.id });
     return show(h('div', { class: 'summary' }, h('div', {}, heading, meta)), warningList(warnings), noSkills(repository.id));
   }
+  remarkOnScan(skills.length, elapsed);
 
   const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
   const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));

@@ -279,6 +279,20 @@ button.speaker { display: block; height: auto; padding: 0; border: 0; border-rad
   border-bottom: 1px solid var(--gold);
   transform: rotate(45deg);
 }
+/* The crest alpaca's comments: the same bubble, below the crest, its tail pointing up; above the page, but clicks go through.
+   Fixed in the window, where app.js puts it as the alpaca speaks: on a scrolled page, at the top. */
+.crest-stage { flex: none; }
+.bubble.comment {
+  position: fixed;
+  left: var(--left, 64px);
+  top: var(--top, 148px);
+  bottom: auto;
+  z-index: 5;
+  transform: none;
+  pointer-events: none;
+  font-size: var(--text-sm);
+}
+.bubble.comment::before { left: 30px; top: -8px; bottom: auto; transform: rotate(135deg); }
 .ornament { color: var(--gold); letter-spacing: 0.5em; font-size: var(--text-sm); }
 .invitation {
   display: inline-block;
@@ -431,6 +445,7 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   .skeleton { animation: pulse 1.2s ease-out infinite alternate; }
   .idle .hero { animation: sway 5s ease-in-out infinite alternate; transform-origin: 50% 100%; }
   .speaker.wobble .hero { animation: wobble 0.6s ease-in-out; }
+  .crest.wobble .alpaca { animation: wobble 0.6s ease-in-out; }
   .trotter use { animation: trot 0.45s ease-in-out infinite alternate; }
   .trail.resting .trotter use { animation: none; }
   .trail.roaming .trotter { animation: roam 5s linear infinite; transition: none; }

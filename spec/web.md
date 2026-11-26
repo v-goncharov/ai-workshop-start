@@ -25,7 +25,23 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
   in a speech bubble beside it, picked at random from the ones in `app.js`, *never the same one twice in a row*; the alpaca wobbles.
   Another click on it, another joke. The bubble goes after 5 s, or on a click anywhere else.
   The bubble is an `aria-live="polite"` region, so screen readers announce the joke. No wobble under `prefers-reduced-motion`
-- The crest stays a plain link home; it does not speak
+- The crest stays a plain link home (a click on it is no joke and no comment)
+- *The crest alpaca comments* on what the user does, in every state: the same speech bubble, beside the crest, `aria-live="polite"`.
+  Each action has a *1 in 3 chance* of a comment, and at least *10 s* go by between two comments; a skipped action doesn't count.
+  The bubble is below the crest, or at the top of the window when the page is scrolled past it.
+  A comment replaces the one shown; it goes after 5 s (a click elsewhere leaves it); the crest wobbles, not under `prefers-reduced-motion`.
+  It never takes focus, and the bubble lets clicks through. The lines are pre-written, in `phrases.js`: *at least 150*,
+  at least 10 per category, *never the same one twice in a row*. A line may quote what the user did, shortened to 30 characters with `…`,
+  always as text, never markup. The categories:
+  - **Scan started**: a GitHub URL (`{input}`, repository or owner), or a directory (`{input}`)
+  - **Scan finished** (repository or owner, `{skills}`, `{time}`): *many* (20 skills or more), *few* (1 to 3), *slow* (10 s or more),
+    *fast* (under 1 s); when two apply, chance picks one; when none does, no comment
+  - **No skills** (`{input}`); **scan error** (`{input}`), as the page shows them
+  - **Filter**, once typing stops for 800 ms (not on every key): *a match* (`{text}` in quotes, `{skills}` shown), *no match* (`{text}`),
+    *cleared* (it had words, now none). Words unchanged since the last time, or the filter from the address → nothing
+  - **Clicks**: a skill's file link (`{name}`), opening a *Full description* (`{name}`), a skill's copies, "Also in …" (`{name}`),
+    and *the empty page*: a click on nothing that does anything (not a link, button, field, label, summary, the table or a bubble)
+- Not in the CLI
 - The copy speaks of the alpaca (it is sent out, grazes, comes back); the texts quoted below stay as they are. No motion under `prefers-reduced-motion`
 ## States
 - **Idle**: the alpaca (it speaks, see [Look](#look)), what is scanned, and one example
@@ -51,6 +67,7 @@ An owner URL → `200` `{ owner, repositories, skipped, warnings }`: `owner` is 
 - No input, or the CLI's error (unreachable repository, rate limit…) → `400` `{ error }`, the CLI's message
 - An unexpected failure → `500` `{ error }`, a short message; the details go to the server's stderr
 - `/filter.js`: the CLI's filter module, `src/core/filter.js`, as the page loads it
+- `/phrases.js`: the alpaca's comments, `src/web/static/phrases.js`
 - Anything else → `404`; anything but `GET` → `405`
 ## Command line
 - `--port 0`: any free port; it prints the address
