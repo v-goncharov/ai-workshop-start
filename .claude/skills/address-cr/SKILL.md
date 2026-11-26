@@ -44,7 +44,7 @@ Merge only when all's good — every one of these holds, checked now, not assume
   - A review thread is handled when it is resolved, or when its last comment carries `<!-- address-cr -->` and the qualifying approval was submitted after that comment.
   - A review body or top-level PR comment is handled when it is the qualifying approval itself, was posted before it, or carries `<!-- address-cr -->`.
   - Anything else is open.
-- The latest review is an approval and no later review requests changes: `reviewDecision` is `APPROVED`, or, when the reviewer is the PR author's account (GitHub then records the verdict as a `COMMENTED` review), the latest review's body states approval and no newer review or comment asks for changes.
+- The latest review is an approval and no later review requests changes: `reviewDecision` is `APPROVED`, or, when the reviewer is the PR author's account (GitHub then records the verdict as a `COMMENTED` review), the latest review's body states approval and no newer review or comment asks for changes. That review is the qualifying approval, and it must be of the commit being merged: its `commit.oid` (from `pullRequest.reviews`) equals the PR's `headRefOid`. GitHub keeps `APPROVED` after new pushes, so an approval of an older commit doesn't count; report that the PR is waiting for a review of the head commit.
 - Checks pass: `gh pr checks` reports every required check as passing (none failing or pending). If there are no checks, run `npm run typecheck` and `npm test` on the PR head and require both to pass.
 - GitHub can merge it: `gh pr view --json mergeable,mergeStateStatus,isDraft` shows `MERGEABLE`, a `CLEAN` (or `HAS_HOOKS`) state, and not a draft.
 
