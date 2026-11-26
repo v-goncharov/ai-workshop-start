@@ -1,0 +1,16 @@
+# demo
+
+Feature demos, recorded as videos: `npm run demo -- <scenario>` → `demo/out/<scenario>.mp4` (not committed).
+
+| Scenario | Shows |
+| --- | --- |
+| [`filter`](scenarios/filter.ts) | the [filter](../spec/cli.md#filter): one word, every word, a path, the address, no match; then the CLI |
+
+- [`record.ts`](record.ts) starts `./skill-atlas serve` on a free port, drives the web view in a browser with
+  Playwright, puts captions and the page's address on top, and encodes the frames with `ffmpeg`, 1280×800, 25 fps.
+- [`repo/`](repo/) is the scanned repository: 11 skills in the three folders, one with a copy. Local, so a recording
+  needs no network and comes out the same every time.
+- Needs `ffmpeg` on the `PATH` and a browser: Playwright's Chromium (`npx playwright install chromium`), or else
+  the installed Google Chrome.
+- A new demo: a file in `scenarios/` that exports `async ({ page, caption, type, click, terminal, … }) => …`;
+  see the `Demo` interface in `record.ts`.
