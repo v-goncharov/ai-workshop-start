@@ -28,3 +28,4 @@ Set `GITHUB_TOKEN` for a higher GitHub rate limit (an organization needs a few r
 
 - [spec/](spec/): what it does; [spec/web.md](spec/web.md): the web view. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.
+- [demo/](demo/README.md): feature demos as videos, `npm run demo -- filter`.
