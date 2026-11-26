@@ -290,6 +290,9 @@ async function page(t: TestContext, path: string, { result = true, until = '#fil
   const nodeFetch = fetch;
   Object.defineProperty(globalThis, 'fetch', { value: (url: string, init?: RequestInit) => nodeFetch(new URL(url, window.location.href), init), configurable: true, writable: true });
   t.after(() => {
+    // Back to the idle page, as a user leaves: a filter's wait left running would roll the next test's dice.
+    window.history.pushState(null, '', '/');
+    window.dispatchEvent(new window.PopStateEvent('popstate'));
     for (const [name, descriptor] of Object.entries(saved)) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else delete (globalThis as Record<string, unknown>)[name];
@@ -550,10 +553,12 @@ test('no motion under prefers-reduced-motion: what moves is only in the no-prefe
 
 // The crest alpaca comments on what the user does (spec/web.md, "Look"). Chance is pinned: Math.random answers the
 // given rolls in turn, then 0. A comment rolls three times — its 1-in-3 chance, its category, its phrase; an action
-// that chance skips rolls once; one in the cooldown, or with no category, not at all.
+// that chance skips rolls once; one in the cooldown, or with no category, not at all. An action the alpaca can refuse
+// rolls once before that: 0.9 or over refuses (then two rolls for its phrase), under it goes on; the queue's 0 goes on.
 const CATEGORIES = [
   'scanGitHub', 'scanLocal', 'scanMany', 'scanFew', 'scanSlow', 'scanFast', 'noSkills', 'scanError',
   'filterMatch', 'filterNoMatch', 'filterCleared', 'openFile', 'fullDescription', 'copies', 'emptyPage',
+  'scanRefused', 'filterRefused',
 ] as const;
 const phrases = PHRASES as Record<(typeof CATEGORIES)[number], string[]>;
 
@@ -989,6 +994,249 @@ test('the comment goes after 5 s, not on a click elsewhere; a joke is no comment
   assert.ok(JOKES.includes(document.querySelector('.idle .bubble')?.textContent ?? ''), 'the joke');
   assert.equal(says(), '', 'no comment on the joke button');
   t.mock.timers.reset();
+});
+
+// The alpaca sometimes refuses (spec/web.md, "Look"): a scan or a filter, about 1 in 10, never twice in a row.
+
+/** What the page asks the server for from now on. */
+function requests(window: DOMWindow) {
+  const asked: string[] = [];
+  const pageFetch = globalThis.fetch;
+  Object.defineProperty(globalThis, 'fetch', {
+    value: (url: string, init?: RequestInit) => (asked.push(String(url)), pageFetch(url, init)),
+    configurable: true,
+    writable: true,
+  });
+  return asked;
+}
+
+/** The scan form, filled in with `value` and sent with its button, as a user does. */
+function scanFrom(window: DOMWindow, value: string) {
+  const document = window.document;
+  (document.getElementById('input') as HTMLInputElement).value = value;
+  const button = document.getElementById('scan-button') as HTMLButtonElement;
+  button.focus();
+  button.click();
+}
+
+const where = (window: DOMWindow) => window.location.pathname + window.location.search;
+
+test('the refusal phrases: at least 10 for a scan and for a filter, no two alike, what the user did as a placeholder', () => {
+  for (const [category, placeholder] of [['scanRefused', '{input}'], ['filterRefused', '{text}']] as const) {
+    assert.ok(phrases[category].length >= 10, `${category}: ${phrases[category].length}`);
+    assert.equal(new Set(phrases[category]).size, phrases[category].length);
+    assert.ok(phrases[category][0].includes(placeholder), `${category}'s first line quotes ${placeholder}`);
+  }
+});
+
+test('a refused scan: nothing requested, a phrase shown, the page and the address as they were', async (t) => {
+  const { window, document, crest, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const asked = requests(window);
+  const history = window.history.length;
+  rolls(t, [0.9, 0, 0]);
+  scanFrom(window, FIXTURE);
+  assert.equal(says(), phrases.scanRefused[0].replace('{input}', 'fixture'));
+  assert.ok(crest.classList.contains('wobble'), 'the crest wobbles');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(asked, [], 'nothing requested');
+  assert.ok(document.querySelector('.idle'), 'the idle page stays');
+  assert.equal(where(window), '/', 'the address unchanged');
+  assert.equal(window.history.length, history, 'no history entry');
+  const input = document.getElementById('input') as HTMLInputElement;
+  assert.equal(input.value, FIXTURE, 'the field keeps what was typed');
+  assert.equal(input.hasAttribute('aria-invalid'), false, 'the field is not marked invalid');
+  assert.equal(document.activeElement, document.getElementById('scan-button'), 'focus stays where it was');
+  assert.equal((document.getElementById('scan-button') as HTMLButtonElement).disabled, false);
+
+  // From a result: the result stays on screen.
+  const shown = await commentPage(t, at(FIXTURE), [0.9, 0.9]);
+  const again = requests(shown.window);
+  rolls(t, [0.9, 0, 0]);
+  scanFrom(shown.window, repository(t).root);
+  assert.ok(from('scanRefused', shown.says()), shown.says());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(again, []);
+  assert.equal(where(shown.window), at(FIXTURE));
+  assert.equal(shown.document.querySelectorAll('table.skills tbody tr:not(.no-match)').length, 3, 'the result stays');
+});
+
+test('the example link and Scan again can be refused too', async (t) => {
+  const idle = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const asked = requests(idle.window);
+  rolls(t, [0.9, 0, 0]);
+  clickOn(idle.document.getElementById('example')!);
+  assert.equal(idle.says(), phrases.scanRefused[0].replace('{input}', 'JetBrains/MPS'));
+  assert.deepEqual(asked, []);
+  assert.equal(where(idle.window), '/');
+  assert.ok(idle.document.querySelector('.idle'));
+
+  // The scan start and the error skipped, then Scan again, refused: the error stays.
+  const error = await commentPage(t, at('limited-token'), [0.9, 0.9], { result: false });
+  const again = requests(error.window);
+  rolls(t, [0.9, 0, 0]);
+  clickOn([...error.document.querySelectorAll('.error button')].find((button) => button.textContent === 'Scan again')!);
+  assert.ok(from('scanRefused', error.says()), error.says());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(again, []);
+  assert.ok(error.document.querySelector('.error'), 'the error stays');
+});
+
+test('a refused filter: the rows, the count and the address as before the typing; the text stays in the field', async (t) => {
+  const { root } = repository(t);
+  const { window, document, bubble, says } = await commentPage(t, at(root), [0.9, 0.9]);
+  timers(t);
+  const filter = document.getElementById('filter') as HTMLInputElement;
+  filter.focus();
+  type(window, 'tests');
+  assert.deepEqual(shown(window).names, ['mps-tests'], 'the rows follow the typing');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.equal(says(), phrases.filterRefused[0].replace('{text}', '“tests”'));
+  assert.equal(bubble.getAttribute('aria-live'), 'polite');
+  assert.deepEqual(shown(window), { names: ['build-tools-bump-gradle-api', 'commits', 'mps-tests'], count: '', noMatch: '' });
+  assert.equal(where(window), at(root), 'no filter in the address');
+  assert.equal(filter.value, 'tests', 'the text stays');
+  assert.equal(document.activeElement, filter, 'focus stays');
+  t.mock.timers.reset();
+
+  // From a filter set in the address: back to it.
+  const set = await commentPage(t, `${at(root)}&filter=tests`, [0.9, 0.9]);
+  timers(t);
+  type(set.window, 'commits');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.ok(from('filterRefused', set.says()), set.says());
+  assert.deepEqual(shown(set.window), { names: ['mps-tests'], count: 'Showing 1 of 3 skills', noMatch: '' });
+  assert.equal(where(set.window), `${at(root)}&filter=tests`);
+  t.mock.timers.reset();
+});
+
+test('asking again works: a second try always goes through, a scan and a filter', async (t) => {
+  const { window, document, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const asked = requests(window);
+  rolls(t, [0.9, 0, 0]);
+  scanFrom(window, FIXTURE);
+  assert.ok(from('scanRefused', says()));
+  // Chance would refuse again; it doesn't.
+  rolls(t, [0.99, 0.99, 0.99, 0.99]);
+  scanFrom(window, FIXTURE);
+  await shows(document, '#filter');
+  assert.ok(document.getElementById('filter'), 'the second try goes through');
+  assert.equal(asked.length, 1);
+  assert.equal(where(window), at(FIXTURE), 'in the address');
+
+  timers(t);
+  type(window, 'commits');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.ok(from('filterRefused', says()));
+  assert.equal(shown(window).names.length, 3);
+  // The same words typed again: the second try.
+  rolls(t, [0.99, 0.99, 0.99, 0.99]);
+  type(window, 'commits ');
+  tick(t, 800);
+  assert.deepEqual(shown(window).names, ['commits']);
+  assert.equal(where(window), `${at(FIXTURE)}&filter=commits`);
+  t.mock.timers.reset();
+});
+
+test('about 1 in 10: a roll at or over 0.9 refuses, one under it does not', async (t) => {
+  const { window, document, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  const asked = requests(window);
+  // Under 0.9: the scan goes on; its start and its end skipped.
+  rolls(t, [0.899, 0.9, 0.9]);
+  scanFrom(window, FIXTURE);
+  await shows(document, '#filter');
+  assert.equal(asked.length, 1);
+  assert.equal(says(), '');
+  rolls(t, [0.9, 0, 0]);
+  scanFrom(window, FIXTURE);
+  assert.ok(from('scanRefused', says()));
+  assert.equal(asked.length, 1);
+});
+
+test('a refusal skips the 1 in 3 and the 10 s gap; it starts the gap as a comment does; never the same phrase twice in a row', async (t) => {
+  const { window, document, says } = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  timers(t);
+  clickOn(document.querySelector('main')!);
+  assert.ok(from('emptyPage', says()), 'a comment, then within 10 s:');
+  type(window, 'mps');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  const first = says();
+  assert.equal(first, phrases.filterRefused[0].replace('{text}', '“mps”'), 'refused all the same');
+  // The second try goes through, with no comment: the refusal started the 10 s.
+  type(window, 'commits');
+  tick(t, 800);
+  assert.equal(says(), first);
+  assert.deepEqual(shown(window).names, ['commits']);
+  type(window, 'gradle');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.ok(from('filterRefused', says()));
+  assert.notEqual(says(), phrases.filterRefused[0].replace('{text}', '“gradle”'), 'another phrase');
+  t.mock.timers.reset();
+});
+
+test('never refused: a scan from the address, back and forward; clearing the filter; the filter from the address; an empty field', async (t) => {
+  const refuse = Array.from({ length: 40 }, () => 0.99);
+  const { window, document, says } = await commentPage(t, `${at(repository(t).root)}&filter=tests`, refuse);
+  assert.deepEqual(shown(window).names, ['mps-tests'], 'the filter from the address');
+  assert.equal(says(), '');
+  // Back and forward go through the address.
+  window.history.pushState(null, '', at(FIXTURE));
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  await shows(document, '.skills .name');
+  for (let i = 0; i < 200 && document.querySelectorAll('table.skills tbody tr:not(.no-match)').length !== 3; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(document.querySelector('.summary h1')?.textContent, 'fixture');
+  assert.equal(says(), '');
+
+  timers(t);
+  rolls(t, [0, 0.99, 0.99]);
+  type(window, 'commits');
+  tick(t, 800);
+  assert.deepEqual(shown(window).names, ['commits']);
+  rolls(t, refuse);
+  type(window, '');
+  tick(t, 800);
+  assert.equal(shown(window).names.length, 3, 'clearing the filter');
+  assert.equal(says(), '');
+  t.mock.timers.reset();
+
+  rolls(t, refuse);
+  scanFrom(window, '   ');
+  assert.equal(document.getElementById('input-error')?.textContent, 'Enter a GitHub URL or a directory path.');
+  assert.equal(says(), '', 'an empty field: its message, no refusal');
+});
+
+test('back to the idle page before typing stops: no comment and no refusal on the filter that is gone', async (t) => {
+  const { window, document, says } = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  timers(t);
+  type(window, 'tests');
+  window.history.pushState(null, '', '/');
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  assert.ok(document.querySelector('.idle'));
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.equal(says(), '');
+  t.mock.timers.reset();
+});
+
+test('refused: what the user typed goes in as text, never markup, shortened to 30 characters', async (t) => {
+  const { window, bubble, says } = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  timers(t);
+  type(window, '<img src=x onerror=alert(1)><b>bold</b>');
+  rolls(t, [0.9, 0, 0]);
+  tick(t, 800);
+  assert.equal(says(), phrases.filterRefused[0].replace('{text}', '“<img src=x onerror=alert(1)><…”'));
+  assert.equal(bubble.children.length, 0, 'no markup');
+  t.mock.timers.reset();
+
+  const idle = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  rolls(t, [0.9, 0, 0]);
+  scanFrom(idle.window, '/tmp/<img src=x onerror=alert(1)>-and-a-name-far-too-long');
+  assert.equal(idle.says(), phrases.scanRefused[0].replace('{input}', '<img src=x onerror=alert(1)>-…'));
+  assert.equal(idle.bubble.children.length, 0, 'no markup');
 });
 
 /** `/api/scan` as the page asks for it: a stream of JSON lines. */

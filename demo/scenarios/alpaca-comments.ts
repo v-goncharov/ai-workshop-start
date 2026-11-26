@@ -37,7 +37,8 @@ export default async function alpacaComments({ page, repo, caption, pause, type,
   await pause(3400);
 
   await later();
-  await page.evaluate(() => (window as unknown as { demoRolls: number[] }).demoRolls.push(0.9)); // no comment on the start this time
+  // The scan goes on (0, under the refusals' 0.9); no comment on the start this time (0.9).
+  await page.evaluate(() => (window as unknown as { demoRolls: number[] }).demoRolls.push(0, 0.9));
   await click(page.locator('#scan-button'));
   await says();
   await caption('A scan finished', 'Many skills, few, a slow scan or, here, a fast one');

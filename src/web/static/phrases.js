@@ -211,4 +211,33 @@ export const PHRASES = {
     'You clicked on fresh air. Very fresh.',
     'Nothing to see here. Move along.',
   ],
+  // Refused: a scan from the form, the example or "Scan again" (`{input}`, said shortly). Always said; nothing is scanned.
+  scanRefused: [
+    '{input}? Not now. I am mid-nap.',
+    'Not now. I am mid-nap.',
+    'I shan’t go to {input}. Ask again, nicely.',
+    'My hooves hurt. Ask me again in a moment.',
+    'No. I have just sat down.',
+    '{input} can wait. My tea cannot.',
+    'I am polishing my monocle. Try again.',
+    'Not today, thank you. Well, perhaps if you ask again.',
+    'An alpaca has a will of its own. Ask again.',
+    'I refuse, on principle. Which principle? Ask again.',
+    'Out? In this weather? Ask me once more.',
+    'I am on my lunch break. Grass waits for no one.',
+  ],
+  // Refused: the filter, once typing stops (`{text}`, in quotes). The rows stay as they were.
+  filterRefused: [
+    '{text}? I’d rather not sort through that.',
+    'Not now. The rows and I are mid-nap.',
+    'Filter? I have only just tidied the table.',
+    '{text}. No. Ask again, nicely.',
+    'My monocle is fogged. Type it again.',
+    'Shan’t. The rows like where they are.',
+    'I refuse to filter on an empty stomach.',
+    'Not those words. Well, maybe next time.',
+    '{text}? I pretend I didn’t hear that.',
+    'Sorting is beneath me today. Try once more.',
+    'The rows are napping. Ask again and I’ll wake them.',
+  ],
 };

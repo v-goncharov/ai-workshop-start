@@ -16,6 +16,7 @@ Turn a feature into a short captioned video that shows the feature working, in f
 ## 2. Scenario
 - One file per feature: `demo/scenarios/<feature>.ts`, exporting `async (demo: Demo) => …`. Copy [filter.ts](../../../demo/scenarios/filter.ts) as a starting point. The helpers are on the `Demo` interface in [record.ts](../../../demo/record.ts): `caption`, `type`, `clear`, `click` (it flashes the target, since the video shows no mouse pointer), `pause`, `terminal`, and Playwright's `page`.
 - Scan [demo/repo/](../../../demo/repo/), a local repository, so the video needs no network and comes out the same every time. If the feature needs data it doesn't have, add skills there. Then update every scenario whose captions count or name skills (`filter.ts` says "11 skills"), and re-record those scenarios.
+- Pin chance in any scenario that scans or filters: the alpaca's comments and refusals roll `Math.random`, and a refused scan or filter breaks the video. Start with `page.addInitScript(() => { Math.random = () => 0.5; })` and `page.reload()` (0.5: no refusal, no comment), as `filter.ts` does; queue other rolls when the feature needs them, as `alpaca-refuses.ts` does.
 - Wait for what the feature produces (`locator.waitFor()`) before each caption about it, not for a fixed time.
 - Don't change the app for the demo. A problem the demo exposes is a bug: fix it in the PR, with a test.
 

@@ -3,6 +3,11 @@
 import type { Demo } from '../record.ts';
 
 export default async function filter({ page, repo, caption, pause, type, clear, click, terminal }: Demo) {
+  // Chance pinned, so the video comes out the same every time: 0.5 is no refusal (under 0.9) and no comment (over 1/3).
+  await page.addInitScript(() => {
+    Math.random = () => 0.5;
+  });
+  await page.reload();
   await caption('Skill Atlas: filtering skills', 'Every SKILL.md in a repository — and only the ones you need');
   await pause(2200);
 
