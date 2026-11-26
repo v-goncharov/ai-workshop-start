@@ -1,4 +1,4 @@
-import { AtlasError } from './errors.ts';
+import { AtlasError, GitHubError, RateLimitError } from './errors.ts';
 import { SKILL_ROOTS } from './find.ts';
 import type { Source } from './scan.ts';
 
@@ -24,6 +24,16 @@ export function parseGitHubUrl(input: string): { owner: string; repo: string; re
   return match[3] ? { owner: match[1], repo: match[2], ref: match[3] } : { owner: match[1], repo: match[2] };
 }
 
+/**
+ * `https://github.com/<owner>`, an organization or a user, with or without the scheme or a trailing slash.
+ * `tree` when it goes on with `/tree/…`, which only a repository has. A repository URL is not an owner's.
+ */
+export function parseGitHubOwner(input: string): { owner: string; tree: boolean } | undefined {
+  if (parseGitHubUrl(input)) return undefined;
+  const match = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)(\/tree\/\S*)?\/?$/i.exec(input.trim());
+  return match ? { owner: match[1], tree: Boolean(match[2]) } : undefined;
+}
+
 /** Resolves the default branch, or the ref in the URL, to a commit and lists the files that may be skills. */
 export async function openGitHub(input: string, options: GitHubOptions): Promise<Source> {
   const name = parseGitHubUrl(input);
@@ -33,8 +43,11 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
     `${API}/repos/${name.owner}/${name.repo}`,
     `Repository not found: https://github.com/${name.owner}/${name.repo}`,
   );
-  const id = info.full_name;
-  const ref = name.ref ?? info.default_branch;
+  return openRepository(github, info.full_name, name.ref ?? info.default_branch);
+}
+
+/** A repository whose name and ref are known: the ref resolved to a commit, and the files that may be skills. */
+export async function openRepository(github: Client, id: string, ref: string): Promise<Source> {
   const { sha } = await github.json<{ sha: string }>(
     `${API}/repos/${id}/commits/${encodePath(ref)}`,
     `Not found in https://github.com/${id}: ${ref}`,
@@ -87,9 +100,10 @@ function files(tree: Tree): string[] {
   return tree.tree.filter((item) => item.type === 'blob' && item.mode !== '120000').map((item) => item.path);
 }
 
-type Client = ReturnType<typeof client>;
+export type Client = ReturnType<typeof client>;
 
-function client({ fetch, token }: GitHubOptions) {
+/** GitHub API requests with the token, each URL asked for once; errors explained as AtlasErrors. */
+export function client({ fetch, token }: GitHubOptions) {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const answers = new Map<string, Promise<unknown>>(); // the root tree is asked for once per skill root
@@ -108,12 +122,12 @@ function client({ fetch, token }: GitHubOptions) {
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
-    if (response.status === 404) throw new AtlasError(notFound);
+    if (response.status === 404) throw new GitHubError(404, notFound);
     if ((response.status === 403 || response.status === 429) && /rate limit/i.test(text)) {
-      throw new AtlasError(`GitHub rate limit reached; ${token ? 'try again in a minute' : 'set GITHUB_TOKEN'}`);
+      throw new RateLimitError(`GitHub rate limit reached; ${token ? 'try again in a minute' : 'set GITHUB_TOKEN'}`);
     }
-    if (response.status === 401) throw new AtlasError('GitHub rejected the token in GITHUB_TOKEN');
-    throw new AtlasError(`GitHub answered ${response.status} for ${url}${text && `: ${text}`}`);
+    if (response.status === 401) throw new GitHubError(401, 'GitHub rejected the token in GITHUB_TOKEN');
+    throw new GitHubError(response.status, `GitHub answered ${response.status} for ${url}${text && `: ${text}`}`);
   }
 
   return {
@@ -122,6 +136,11 @@ function client({ fetch, token }: GitHubOptions) {
       if (!answers.has(url)) answers.set(url, request(url, notFound));
       return answers.get(url) as Promise<T>;
     },
+    /** A GitHub API answer asked for again each time, such as the rate limit left. */
+    fresh<T>(url: string): Promise<T> {
+      return request(url, `Not found on GitHub: ${url}`) as Promise<T>;
+    },
+    token,
     /** A file's bytes at the scanned commit, or undefined if it is not there. */
     async raw(url: string): Promise<Uint8Array | undefined> {
       // A private repository's files need the token too.

@@ -190,6 +190,13 @@ button.link {
 .warnings li { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .warnings li + li { margin-top: var(--space-1); }
 
+/* An owner: one section per repository */
+.repository { margin-top: var(--space-6); }
+.repository h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; overflow-wrap: anywhere; }
+.repository h2 a { color: var(--text); text-decoration: none; }
+.repository h2 a:hover { text-decoration: underline; }
+.repository .meta { margin-bottom: var(--space-3); }
+
 /* Skills table */
 .skills { width: 100%; border-collapse: collapse; font-size: var(--text-md); }
 .skills caption { text-align: left; }

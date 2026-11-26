@@ -106,7 +106,8 @@ async function scanInput(value) {
     const body = await response.json().catch(() => ({ error: `The server answered ${response.status} without details.` }));
     if (controller.signal.aborted) return;
     if (!response.ok) return showError(value, body.error, advice(body.error));
-    showResult(body, performance.now() - started);
+    if (body.owner) showOwnerResult(body, performance.now() - started);
+    else showResult(body, performance.now() - started);
   } finally {
     if (current === controller) setBusy(false);
   }
@@ -114,8 +115,10 @@ async function scanInput(value) {
 
 /** What to do next, for the errors the scan explains. */
 function advice(message = '') {
-  if (/rate limit/i.test(message)) return ['Restart the server with a token, ', h('code', {}, 'GITHUB_TOKEN=… ./skill-atlas serve'), ', then scan again.'];
+  if (/rate limit|API requests remain/i.test(message)) return ['Restart the server with a token, ', h('code', {}, 'GITHUB_TOKEN=… ./skill-atlas serve'), ', then scan again.'];
   if (/Cannot reach GitHub/i.test(message)) return 'Check your network connection, then scan again.';
+  if (/works only for a repository/i.test(message)) return 'Remove /tree/… to scan every repository of the owner on its default branch, or add a repository name.';
+  if (/^Owner not found/i.test(message)) return 'Check the organization or user name.';
   if (/not found/i.test(message)) return 'Check the owner, the repository name and the branch or commit. Private repositories need GITHUB_TOKEN.';
   if (/directory/i.test(message)) return 'Paste a full https://github.com/<owner>/<repo> URL, or a path to a directory the server can read.';
   return 'Check the URL or path, then scan again.';
@@ -167,54 +170,58 @@ function plural(count, one, many) {
   return `${count.toLocaleString('en')} ${count === 1 ? one : many}`;
 }
 
-function showResult({ repository, skills, warnings }, elapsed) {
-  document.title = `${repository.id} · ${plural(skills.length, 'skill', 'skills')} · Skill Atlas`;
-  const isWeb = /^https?:/.test(repository.url);
-  const heading = h('h1', {}, isWeb ? h('a', { href: repository.url }, repository.id) : repository.id);
-  const meta = h('p', { class: 'meta' },
-    plural(skills.length, 'skill', 'skills'),
-    repository.local
-      ? ' · local directory'
-      : [' · commit ', h('a', { href: `${repository.url}/tree/${repository.commit}`, title: repository.commit }, h('code', {}, repository.commit.slice(0, 7)))],
-    ` · scanned in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`,
-  );
+function scannedIn(elapsed) {
+  return ` · scanned in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`;
+}
 
-  const warningList = warnings.length > 0 &&
+/** The scanned commit, linked; or "local directory". */
+function commitMeta(repository) {
+  return repository.local
+    ? ' · local directory'
+    : [' · commit ', h('a', { href: `${repository.url}/tree/${repository.commit}`, title: repository.commit }, h('code', {}, repository.commit.slice(0, 7)))];
+}
+
+function warningList(warnings) {
+  return warnings.length > 0 &&
     h('details', { class: 'warnings', open: warnings.length <= 3 },
       h('summary', {}, plural(warnings.length, 'warning', 'warnings')),
       h('ul', {}, warnings.map((warning) => h('li', {}, warning))),
     );
+}
 
-  if (skills.length === 0) {
-    return show(
-      h('div', { class: 'summary' }, h('div', {}, heading, meta)),
-      warningList,
-      h('div', { class: 'state' },
-        h('h2', { class: 'state-title' }, `No skills in ${repository.id}`),
-        h('p', {}, 'Skill Atlas counts only ', h('code', {}, '<root>/<name>/SKILL.md'), ' under ',
-          h('code', {}, '.agents/skills'), ', ', h('code', {}, '.claude/skills'), ' and ', h('code', {}, '.github/skills'),
-          '. Skills elsewhere, such as test data or skills shipped inside the product, are skipped.'),
-      ),
-    );
-  }
+function noSkills(where) {
+  return h('div', { class: 'state' },
+    h('h2', { class: 'state-title' }, `No skills in ${where}`),
+    h('p', {}, 'Skill Atlas counts only ', h('code', {}, '<root>/<name>/SKILL.md'), ' under ',
+      h('code', {}, '.agents/skills'), ', ', h('code', {}, '.claude/skills'), ' and ', h('code', {}, '.github/skills'),
+      '. Skills elsewhere, such as test data or skills shipped inside the product, are skipped.'),
+  );
+}
 
-  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
-  const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));
+/**
+ * A filter over the rows of one or more tables, by the CLI's rules: `rows` are { skill, row, section? }; a section
+ * with no matching row is hidden. `noMatch` shows when nothing matches, its message in `message`.
+ * It starts from ?filter= in the address and keeps it there. Returns the field and the live count.
+ */
+function rowFilter(rows, total, noMatch, message = noMatch) {
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
   const applyFilter = () => {
     const words = filterWords(filter.value);
     let shown = 0;
-    for (const { skill, row } of rows) {
+    const sections = new Map();
+    for (const { skill, row, section } of rows) {
       const match = matchesFilter(skill, words);
       row.hidden = !match;
       if (match) shown++;
+      if (section) sections.set(section, (sections.get(section) ?? false) || match);
     }
+    for (const [section, any] of sections) section.hidden = !any;
     noMatch.hidden = shown > 0;
-    noMatch.firstChild.replaceChildren(
+    message.replaceChildren(
       `No skills match “${words.join(' ')}”. `,
       h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
     );
-    count.textContent = words.length > 0 ? `Showing ${shown.toLocaleString('en')} of ${plural(skills.length, 'skill', 'skills')}` : '';
+    count.textContent = words.length > 0 ? `Showing ${shown.toLocaleString('en')} of ${plural(total, 'skill', 'skills')}` : '';
   };
   const filter = h('input', {
     id: 'filter', type: 'search', autocomplete: 'off',
@@ -229,13 +236,63 @@ function showResult({ repository, skills, warnings }, elapsed) {
   // ?filter= from the address: a shared or reloaded filtered scan.
   filter.value = new URLSearchParams(location.search).get('filter') ?? '';
   applyFilter();
+  return h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count);
+}
+
+/** An owner: the summary, then one table per repository with skills; the filter goes across all of them. */
+function showOwnerResult({ owner, repositories, skipped, warnings }, elapsed) {
+  const total = repositories.reduce((count, { skills }) => count + skills.length, 0);
+  document.title = `${owner.id} · ${plural(total, 'skill', 'skills')} · Skill Atlas`;
+  const kinds = [skipped.forks && plural(skipped.forks, 'fork', 'forks'), skipped.archived && `${skipped.archived} archived`, skipped.empty && `${skipped.empty} empty`].filter(Boolean);
+  const meta = h('p', { class: 'meta' },
+    `${plural(total, 'skill', 'skills')} in ${repositories.length.toLocaleString('en')} of ${plural(owner.scanned, 'repository', 'repositories')}`,
+    kinds.length > 0 && ` · ${kinds.join(', ').replace(/, ([^,]*)$/, ' and $1')} skipped`,
+    scannedIn(elapsed),
+  );
+  const heading = h('h1', {}, h('a', { href: owner.url }, owner.id));
+
+  if (total === 0) {
+    return show(h('div', { class: 'summary' }, h('div', {}, heading, meta)), warningList(warnings), noSkills(`any repository of ${owner.id}`));
+  }
+
+  const rows = [];
+  const sections = repositories.map(({ repository, skills }) => {
+    const section = h('section', { class: 'repository' });
+    const own = skills.map((skill) => ({ skill, row: skillRow(skill, true), section }));
+    rows.push(...own);
+    section.append(
+      h('h2', {}, h('a', { href: repository.url }, repository.id)),
+      h('p', { class: 'meta' }, plural(skills.length, 'skill', 'skills'), commitMeta(repository)),
+      table(own.map(({ row }) => row)),
+    );
+    return section;
+  });
+  const noMatch = h('p', { class: 'state no-match', hidden: true });
 
   show(
-    h('div', { class: 'summary' },
-      h('div', {}, heading, meta),
-      h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count),
-    ),
-    warningList,
+    h('div', { class: 'summary' }, h('div', {}, heading, meta), rowFilter(rows, total, noMatch)),
+    warningList(warnings),
+    ...sections,
+    noMatch,
+  );
+}
+
+function showResult({ repository, skills, warnings }, elapsed) {
+  document.title = `${repository.id} · ${plural(skills.length, 'skill', 'skills')} · Skill Atlas`;
+  const isWeb = /^https?:/.test(repository.url);
+  const heading = h('h1', {}, isWeb ? h('a', { href: repository.url }, repository.id) : repository.id);
+  const meta = h('p', { class: 'meta' }, plural(skills.length, 'skill', 'skills'), commitMeta(repository), scannedIn(elapsed));
+
+  if (skills.length === 0) {
+    return show(h('div', { class: 'summary' }, h('div', {}, heading, meta)), warningList(warnings), noSkills(repository.id));
+  }
+
+  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
+  const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));
+
+  show(
+    h('div', { class: 'summary' }, h('div', {}, heading, meta), rowFilter(rows, skills.length, noMatch, noMatch.firstChild)),
+    warningList(warnings),
     table([...rows.map(({ row }) => row), noMatch]),
   );
 }

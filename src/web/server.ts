@@ -3,12 +3,16 @@
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AtlasError } from '../core/errors.ts';
+import { parseGitHubOwner } from '../core/github.ts';
 import { firstSentence, skillLink } from '../core/model.ts';
-import { scan, type Source } from '../core/scan.ts';
+import type { OwnerResult } from '../core/owner.ts';
+import { scan, type ScanResult, type Source } from '../core/scan.ts';
 
 export type WebOptions = {
   /** Opens what the user asked to scan, as the CLI does. */
   open(input: string): Promise<Source>;
+  /** Scans every repository of a GitHub organization or user, as the CLI does. */
+  scanOwner?(input: string): Promise<OwnerResult>;
   /** Unexpected failures, for the server log; the page gets a short message. */
   log?(text: string): void;
 };
@@ -17,6 +21,14 @@ export type WebOptions = {
 export type ScanResponse = {
   repository: { id: string; url: string; commit: string; local: boolean };
   skills: { id: string; name: string; path: string; summary: string; description: string; link: string; copies: string[] }[];
+  warnings: string[];
+};
+
+/** What `/api/scan` answers for an owner: each repository with skills as a single one is answered, without its warnings. */
+export type OwnerScanResponse = {
+  owner: { id: string; url: string; scanned: number };
+  repositories: Omit<ScanResponse, 'warnings'>[];
+  skipped: OwnerResult['skipped'];
   warnings: string[];
 };
 
@@ -79,6 +91,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
     const input = url.searchParams.get('input')?.trim();
     if (!input) return json(response, 400, { error: 'Enter a GitHub URL or a directory path.' });
     try {
+      if (parseGitHubOwner(input) && options.scanOwner) return json(response, 200, toOwnerResponse(await options.scanOwner(input)));
       return json(response, 200, toResponse(await scan(await options.open(input))));
     } catch (error) {
       if (error instanceof AtlasError) return json(response, 400, { error: error.message });
@@ -93,7 +106,19 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   response.end(request.method === 'HEAD' ? undefined : body);
 }
 
-function toResponse({ repository, skills, warnings }: Awaited<ReturnType<typeof scan>>): ScanResponse {
+function toOwnerResponse({ owner, scanned, repositories, skipped, warnings }: OwnerResult): OwnerScanResponse {
+  return {
+    owner: { ...owner, scanned },
+    repositories: repositories.map((result) => {
+      const { repository, skills } = toResponse(result);
+      return { repository, skills };
+    }),
+    skipped,
+    warnings,
+  };
+}
+
+function toResponse({ repository, skills, warnings }: ScanResult): ScanResponse {
   return {
     repository: { id: repository.id, url: repository.url, commit: repository.commit, local: !repository.commit },
     skills: skills.map((skill) => ({

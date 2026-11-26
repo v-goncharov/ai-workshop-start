@@ -12,8 +12,10 @@ import { join } from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 import { JSDOM, type DOMWindow } from 'jsdom';
 import { AtlasError } from '../src/core/errors.ts';
-import { createWebServer, listen, type ScanResponse } from '../src/web/server.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
+import { scanOwner } from '../src/core/owner.ts';
+import { replay } from '../src/core/replay.ts';
+import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } from '../src/web/server.ts';
+import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
 
 const logged: string[] = [];
 const server = createWebServer({
@@ -21,6 +23,7 @@ const server = createWebServer({
     if (input === 'crash') throw new Error('boom');
     return open(input);
   },
+  scanOwner: (input) => scanOwner(input, { fetch: replay(acme()) }),
   log: (text) => logged.push(text),
 });
 const address = await listen(server, 0);
@@ -79,6 +82,50 @@ test('a local directory: sorted by name as the CLI prints it, with the warning f
   assert.equal(body.skills[2].summary, '');
   assert.equal(body.warnings.length, 1);
   assert.equal(`warning: ${body.warnings[0]}`, cli.stderr);
+});
+
+test('an owner: { owner, repositories, skipped, warnings }, the repositories with skills as the CLI prints them', async () => {
+  const response = await scan('https://github.com/acme');
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as OwnerScanResponse;
+  assert.deepEqual(Object.keys(body), ['owner', 'repositories', 'skipped', 'warnings']);
+  assert.deepEqual(body.owner, { id: 'acme', url: 'https://github.com/acme', scanned: 5 });
+  assert.deepEqual(body.skipped, { forks: 94, archived: 1, empty: 1 });
+  assert.deepEqual(body.repositories.map(({ repository }) => repository.id), ['acme/MPS', 'acme/api', 'acme/huge']);
+  assert.deepEqual(body.repositories[0], {
+    repository: { id: 'acme/MPS', url: 'https://github.com/acme/MPS', commit: 'mps1', local: false },
+    skills: [
+      {
+        id: 'acme/MPS:.agents/skills/mps-tests/SKILL.md',
+        name: 'mps-tests',
+        path: '.agents/skills/mps-tests/SKILL.md',
+        summary: 'Run the MPS tests.',
+        description: 'Run the MPS tests.',
+        link: 'https://github.com/acme/MPS/blob/mps1/.agents/skills/mps-tests/SKILL.md',
+        copies: ['.claude/skills/mps-tests/SKILL.md'],
+      },
+    ],
+  });
+  const cli = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme()) });
+  assert.deepEqual(body.warnings.map((warning) => `warning: ${warning}`), cli.stderr.split('\n'));
+});
+
+test('an owner’s errors → 400 with the CLI’s message', async () => {
+  const tree = await scan('https://github.com/acme/tree/main');
+  assert.equal(tree.status, 400);
+  assert.deepEqual(await tree.json(), {
+    error: "…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: https://github.com/acme/tree/main",
+  });
+  const offline = await scan('https://github.com/not-answered');
+  assert.equal(offline.status, 400);
+  assert.deepEqual(await offline.json(), { error: 'Cannot reach GitHub: not recorded: https://api.github.com/orgs/not-answered/repos?per_page=100&page=1' });
+});
+
+test('the page takes an owner URL and renders one table per repository', async () => {
+  const page = await (await get('/')).text();
+  assert.match(page, /https:\/\/github\.com\/&lt;owner&gt;/);
+  const script = await (await get('/app.js')).text();
+  assert.match(script, /function showOwnerResult\(/);
 });
 
 test('no skills: an empty list, not an error', async () => {
@@ -289,6 +336,40 @@ test('?filter= in the address: a filtered scan, shared and reloaded', async (t) 
   const window = await page(t, `/?input=${encodeURIComponent(root)}&filter=${encodeURIComponent('Gradle release')}`);
   assert.equal((window.document.getElementById('filter') as HTMLInputElement).value, 'Gradle release');
   assert.deepEqual(shown(window), { names: ['build-tools-bump-gradle-api'], count: 'Showing 1 of 3 skills', noMatch: '' });
+});
+
+/** An owner's page: the repositories whose section is shown, the skills shown, the count and the no-match message. */
+function shownOwner(window: DOMWindow) {
+  const sections = [...window.document.querySelectorAll('section.repository')] as HTMLElement[];
+  const visible = sections.filter((section) => !section.hidden);
+  const noMatch = window.document.querySelector('p.no-match') as HTMLElement;
+  return {
+    repositories: visible.map((section) => section.querySelector('h2')?.textContent),
+    names: visible.flatMap((section) => ([...section.querySelectorAll('tbody tr')] as HTMLElement[]).filter((row) => !row.hidden).map((row) => row.querySelector('.name')?.textContent)),
+    count: window.document.querySelector('.filter .meta')?.textContent,
+    noMatch: noMatch.hidden ? '' : noMatch.textContent,
+  };
+}
+
+test('an owner’s page: one table per repository; the filter, by the CLI’s rules, across all of them, hiding repositories with no match', async (t) => {
+  const window = await page(t, `/?input=${encodeURIComponent('https://github.com/acme')}`);
+  assert.deepEqual(shownOwner(window), { repositories: ['acme/MPS', 'acme/api', 'acme/huge'], names: ['mps-tests', 'api-docs', 'build'], count: '', noMatch: '' });
+  // As the CLI filters an owner: `it` in two repositories, one in the full description only.
+  type(window, 'it');
+  assert.deepEqual(shownOwner(window), { repositories: ['acme/api', 'acme/huge'], names: ['api-docs', 'build'], count: 'Showing 2 of 3 skills', noMatch: '' });
+  const cli = await atlas(['scan', 'https://github.com/acme', '--filter', 'it'], { fetch: replay(acme()) });
+  assert.deepEqual(cli.stdout.split('\n').filter((line) => / match "it"$/.test(line)).map((line) => line.split(' · ')[0]), ['acme/api', 'acme/huge']);
+  assert.equal(window.location.search, `?input=${encodeURIComponent('https://github.com/acme')}&filter=it`);
+  type(window, 'gradle bump');
+  assert.deepEqual(shownOwner(window), { repositories: [], names: [], count: 'Showing 0 of 3 skills', noMatch: 'No skills match “gradle bump”. Clear the filter' });
+  (window.document.querySelector('p.no-match button') as HTMLButtonElement).click();
+  assert.deepEqual(shownOwner(window).repositories, ['acme/MPS', 'acme/api', 'acme/huge']);
+  assert.equal(window.location.search, `?input=${encodeURIComponent('https://github.com/acme')}`);
+});
+
+test('an owner’s page with ?filter= in the address: filtered across the repositories on load', async (t) => {
+  const window = await page(t, `/?input=${encodeURIComponent('https://github.com/acme')}&filter=MPS`);
+  assert.deepEqual(shownOwner(window), { repositories: ['acme/MPS'], names: ['mps-tests'], count: 'Showing 1 of 3 skills', noMatch: '' });
 });
 
 test('/filter.js: the CLI’s filter module, served to the page', async () => {
