@@ -15,13 +15,18 @@ import { AtlasError } from '../src/core/errors.ts';
 import { scanOwner } from '../src/core/owner.ts';
 import { replay } from '../src/core/replay.ts';
 import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } from '../src/web/server.ts';
+import { PHRASES } from '../src/web/static/phrases.js';
 import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
 
 const logged: string[] = [];
 const slow = Promise.withResolvers<void>();
 const halted = Promise.withResolvers<void>();
+/** Scans held until the test lets them go: `held:<directory>`, how long a scan takes is up to the test. */
+const held = new Map<string, Promise<void>>();
 const server = createWebServer({
-  open: (input) => {
+  open: async (input) => {
+    await held.get(input);
+    if (input.startsWith('held:')) return open(input.slice('held:'.length));
     if (input === 'crash') throw new Error('boom');
     // The rate limit's messages, as the CLI words them without and with a token.
     if (input === 'limited-no-token') throw new AtlasError('GitHub rate limit reached; set GITHUB_TOKEN');
@@ -55,7 +60,7 @@ test('serve listens on 127.0.0.1 only', () => {
 });
 
 test('the page, its script and its styles', async () => {
-  for (const [path, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/style.css', 'text/css']]) {
+  for (const [path, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/phrases.js', 'text/javascript'], ['/style.css', 'text/css']]) {
     const response = await get(path);
     assert.equal(response.status, 200, path);
     assert.match(response.headers.get('content-type') ?? '', new RegExp(`^${type}`), path);
@@ -275,7 +280,7 @@ test('serve with a bad port → usage, exit code 1', async () => {
 // The page itself, in spec/web.md ("Page"): the real app.js, run in jsdom against this server.
 
 /** Opens the page at `path` and waits for the scan to show; returns its window. */
-async function page(t: TestContext, path: string, { result = true, until = '#filter, .state, .error' } = {}) {
+async function page(t: TestContext, path: string, { result = true, until = '#filter, .state, .error', before = () => {} } = {}) {
   const html = await (await get('/')).text();
   const { window } = new JSDOM(html, { url: `${address}${path}` });
   const names = ['window', 'document', 'location', 'history', 'Node', 'Event'] as const;
@@ -293,12 +298,18 @@ async function page(t: TestContext, path: string, { result = true, until = '#fil
   // The scripts as served, side by side as the browser resolves them: app.js imports ./filter.js.
   const scripts = mkdtempSync(join(tmpdir(), 'skill-atlas-page-'));
   t.after(() => rmSync(scripts, { recursive: true, force: true }));
-  for (const file of ['app.js', 'filter.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
+  for (const file of ['app.js', 'filter.js', 'phrases.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
+  before();
   await import(pathToFileURL(join(scripts, 'app.js')).href);
   const document = window.document;
-  for (let i = 0; i < 200 && !document.querySelector(until); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  await shows(document, until);
   if (result) assert.ok(document.getElementById('filter'), document.getElementById('result')?.textContent ?? '');
   return window;
+}
+
+/** Waits, for up to 2 s, until the page shows `selector`. */
+async function shows(document: Document, selector: string) {
+  for (let i = 0; i < 200 && !document.querySelector(selector); i++) await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
 /** The names of the rows shown, the count and the no-match message. */
@@ -498,12 +509,16 @@ test('the bubble goes after 5 s, or on a click anywhere else', async (t) => {
   t.mock.timers.reset();
 });
 
-test('the crest stays a plain link home; it does not speak', async (t) => {
-  const { document } = await idlePage(t);
+test('the crest stays a plain link home; a click on it is no joke and no comment', async (t) => {
+  const { document, says } = await idlePage(t);
   const crest = document.querySelector('a.crest') as HTMLAnchorElement;
   assert.equal(crest.getAttribute('href'), '/');
   assert.equal(crest.querySelector('button'), null);
-  assert.equal(document.querySelectorAll('button.speaker').length, 1, 'only the idle alpaca speaks');
+  assert.equal(document.querySelectorAll('button.speaker').length, 1, 'only the idle alpaca tells jokes');
+  t.mock.method(Math, 'random', () => 0);
+  (crest.querySelector('svg') as unknown as HTMLElement).dispatchEvent(new document.defaultView!.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(says(), '');
+  assert.equal(document.querySelector('.comment')?.textContent, '');
 });
 
 test('no motion under prefers-reduced-motion: what moves is only in the no-preference block', async () => {
@@ -522,8 +537,317 @@ test('no motion under prefers-reduced-motion: what moves is only in the no-prefe
   assert.match(motion, /\.trotter \{ transition: left /);
   assert.match(motion, /::-webkit-progress-value \{ transition: width /);
   assert.match(motion, /\.crest:hover \.alpaca \{ transform: /);
-  // The talking alpaca wobbles only here.
+  // The talking alpaca wobbles only here, and so does the crest when it comments.
   assert.match(motion, /\.speaker\.wobble \.hero \{ animation: wobble /);
+  assert.match(motion, /\.crest\.wobble \.alpaca \{ animation: wobble /);
+});
+
+// The crest alpaca comments on what the user does (spec/web.md, "Look"). Chance is pinned: Math.random answers the
+// given rolls in turn, then 0. A comment rolls three times — its 1-in-3 chance, its category, its phrase; an action
+// that chance skips rolls once; one in the cooldown, or with no category, not at all.
+const CATEGORIES = [
+  'scanGitHub', 'scanLocal', 'scanMany', 'scanFew', 'scanSlow', 'scanFast', 'noSkills', 'scanError',
+  'filterMatch', 'filterNoMatch', 'filterCleared', 'openFile', 'fullDescription', 'copies', 'emptyPage',
+] as const;
+const phrases = PHRASES as Record<(typeof CATEGORIES)[number], string[]>;
+
+/** Whether `text` is one of the category's phrases, filled in. */
+function from(category: (typeof CATEGORIES)[number], text: string) {
+  return phrases[category].some((phrase) => new RegExp(`^${phrase.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{\w+\}/g, '.+')}$`).test(text));
+}
+
+/** Math.random answers `values` in turn, then 0. Mocked once per test: a mock of a mock would outlive the test. */
+const queues = new WeakMap<TestContext, number[]>();
+function rolls(t: TestContext, values: number[] = []) {
+  const queue = queues.get(t);
+  if (queue) return void queue.splice(0, queue.length, ...values);
+  const fresh = [...values];
+  queues.set(t, fresh);
+  t.mock.method(Math, 'random', () => (fresh.length > 0 ? fresh.shift()! : 0));
+}
+
+/** performance.now, `ms` ahead of the real one; mocked once per test, as Math.random is. */
+const offsets = new WeakMap<TestContext, { ms: number }>();
+function later(t: TestContext, ms: number) {
+  const offset = offsets.get(t);
+  if (offset) return void (offset.ms = ms);
+  const fresh = { ms };
+  offsets.set(t, fresh);
+  const now = performance.now.bind(performance);
+  t.mock.method(performance, 'now', () => now() + fresh.ms);
+}
+
+/** The page at `path`, chance pinned to `rolled` from the start, and what the crest says. */
+async function commentPage(t: TestContext, path: string, rolled: number[] = [], options: { result?: boolean; until?: string } = {}) {
+  const window = await page(t, path, { ...options, before: () => rolls(t, rolled) });
+  const document = window.document;
+  const bubble = document.querySelector('.masthead .comment') as HTMLElement;
+  const crest = document.querySelector('a.crest') as HTMLElement;
+  return { window, document, bubble, crest, says: () => bubble.textContent ?? '' };
+}
+
+/** A click as a user makes it; links don't navigate (jsdom can't). */
+function clickOn(element: Element) {
+  const window = element.ownerDocument.defaultView!;
+  element.addEventListener('click', (event) => event.target instanceof window.Element && event.target.closest('a') && event.preventDefault(), { once: true });
+  element.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+}
+
+const at = (input: string) => `/?input=${encodeURIComponent(input)}`;
+const tick = (t: TestContext, ms: number) => t.mock.timers.tick(ms);
+const timers = (t: TestContext) => t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+
+test('the phrases: at least 150, at least 10 in each category of the spec, no two alike', () => {
+  assert.deepEqual(Object.keys(PHRASES).sort(), [...CATEGORIES].sort());
+  const all = Object.values(phrases).flat();
+  assert.ok(all.length >= 150, `${all.length} phrases`);
+  for (const category of CATEGORIES) assert.ok(phrases[category].length >= 10, `${category}: ${phrases[category].length}`);
+  assert.equal(new Set(all).size, all.length, 'no two alike');
+  // Only the placeholders app.js fills in.
+  for (const phrase of all) for (const [key] of phrase.matchAll(/\{\w+\}/g)) assert.ok(['{input}', '{skills}', '{time}', '{text}', '{name}'].includes(key), phrase);
+});
+
+test('the crest alpaca comments: the same speech bubble, beside the crest, announced politely, out of the way', async (t) => {
+  const { bubble, crest, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  assert.ok(bubble, 'the bubble');
+  assert.ok(bubble.classList.contains('bubble'));
+  assert.equal(bubble.getAttribute('aria-live'), 'polite');
+  assert.equal(bubble.closest('a, [aria-hidden="true"]'), null, 'outside the crest link, which screen readers skip');
+  assert.equal(bubble.parentElement, crest.parentElement, 'beside the crest');
+  assert.equal(bubble.hasAttribute('tabindex'), false);
+  assert.equal(says(), '', 'silent until something happens');
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.bubble\.comment \{[^}]*pointer-events: none/, 'clicks go through it');
+  assert.match(css, /\.bubble\.comment \{[^}]*position: fixed;[^}]*top: var\(--top/, 'placed in the window');
+});
+
+test('the comment is below the crest, or at the top of the window when the page is scrolled past it', async (t) => {
+  const { document, bubble, crest, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  timers(t);
+  let box = { top: 48, bottom: 136, left: 64 };
+  crest.getBoundingClientRect = () => box as DOMRect;
+  clickOn(document.querySelector('main')!);
+  assert.ok(says());
+  assert.deepEqual([bubble.style.getPropertyValue('--top'), bubble.style.getPropertyValue('--left')], ['148px', '64px']);
+  tick(t, 10_000);
+  box = { top: -600, bottom: -512, left: 64 };
+  clickOn(document.querySelector('main')!);
+  assert.ok(says());
+  assert.equal(bubble.style.getPropertyValue('--top'), '12px', 'scrolled: at the top of the window');
+  t.mock.timers.reset();
+});
+
+test('a scan started: a GitHub URL, an owner or a directory, said shortly', async (t) => {
+  const github = await commentPage(t, at('https://github.com/JetBrains/example'), [0, 0, 0]);
+  assert.equal(github.says(), 'Off to GitHub for JetBrains/example. I packed a monocle.');
+  assert.ok(github.crest.classList.contains('wobble'), 'the crest wobbles');
+  const owner = await commentPage(t, at('https://github.com/acme'), [0, 0, 0]);
+  assert.equal(owner.says(), 'Off to GitHub for acme. I packed a monocle.');
+  const local = await commentPage(t, at(FIXTURE), [0, 0, 0]);
+  assert.equal(local.says(), 'A local directory: fixture. No travel today.');
+});
+
+test('a scan finished: few or fast, chance picks one; many; an owner too', async (t) => {
+  // The start skipped (0.9), then the comment: chance, category, phrase.
+  const few = await commentPage(t, at(FIXTURE), [0.9, 0, 0, 0]);
+  assert.equal(few.says(), 'Only 3 skills. Quality over quantity, I suppose.');
+  const fast = await commentPage(t, at(FIXTURE), [0.9, 0, 0.99, 0]);
+  assert.match(fast.says(), /^Back in \d+ ms\. Did you even blink\?$/);
+  const files = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`.claude/skills/s${i}/SKILL.md`, `---\nname: s${i}\ndescription: Skill ${i}.\n---\n`]));
+  const many = await commentPage(t, at(repository(t, files).root), [0.9, 0, 0, 0]);
+  assert.equal(many.says(), '20 skills! My saddlebag is heaving.');
+  // An owner: its skills across the repositories.
+  const owner = await commentPage(t, at('https://github.com/acme'), [0.9, 0, 0, 0]);
+  const total = owner.document.querySelectorAll('table.skills tbody tr').length;
+  assert.equal(owner.says(), `Only ${total} skills. Quality over quantity, I suppose.`);
+});
+
+/** A scan of `directory` that takes `ms` as the page measures it: held while the clock moves on. */
+async function timedScan(t: TestContext, directory: string, ms: number, rolled: number[]) {
+  const input = `held:${directory}`;
+  const release = Promise.withResolvers<void>();
+  held.set(input, release.promise);
+  const scan = await commentPage(t, at(input), rolled, { result: false, until: '.skeleton' });
+  later(t, ms);
+  release.resolve();
+  await shows(scan.document, '#filter');
+  assert.ok(scan.document.getElementById('filter'), 'the result');
+  return scan;
+}
+
+test('a scan finished: slow; and no comment when no category applies', async (t) => {
+  const slow = await timedScan(t, FIXTURE, 12_000, [0.9, 0, 0.99, 0]);
+  assert.match(slow.says(), /^1\d\.\d s\. I stopped for tea on the way\.$/);
+  // 5 skills in about 2 s: neither many nor few, slow nor fast.
+  const files = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`.claude/skills/s${i}/SKILL.md`, `---\nname: s${i}\ndescription: Skill ${i}.\n---\n`]));
+  // The start skipped; the end would comment if a category applied.
+  later(t, 0);
+  const neither = await timedScan(t, repository(t, files).root, 2000, [0.9]);
+  assert.equal(neither.says(), '');
+});
+
+test('no skills, and a scan error: their own comments', async (t) => {
+  const empty = await commentPage(t, at(repository(t, { 'README.md': '# Nothing\n' }).root), [0.9, 0, 0, 0], { result: false });
+  assert.match(empty.document.querySelector('.state-title')?.textContent ?? '', /^No skills in /);
+  assert.equal(empty.says(), 'Nothing in repo. Not a single skill.');
+  const error = await commentPage(t, at('limited-token'), [0.9, 0, 0, 0], { result: false });
+  assert.ok(error.document.querySelector('.error'));
+  assert.equal(error.says(), 'Oh dear. limited-token would not let me in.');
+});
+
+test('the filter: a comment once typing stops for 800 ms, on a match, no match or cleared; none for words unchanged', async (t) => {
+  // The start and the end of the scan skipped.
+  const { window, document, says } = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  timers(t);
+  const filter = document.getElementById('filter') as HTMLInputElement;
+  filter.focus();
+  for (const words of ['m', 'mp', 'mps']) {
+    type(window, words);
+    tick(t, 300);
+  }
+  assert.equal(says(), '', 'not on every key');
+  tick(t, 499);
+  assert.equal(says(), '');
+  tick(t, 1);
+  assert.equal(says(), 'Searching for “mps”? Bold choice.');
+  assert.equal(document.activeElement, filter, 'the comment takes no focus');
+  tick(t, 10_000);
+  type(window, 'zzz');
+  tick(t, 800);
+  assert.equal(says(), '“zzz”? Never heard of it.');
+  tick(t, 10_000);
+  assert.equal(says(), '', 'gone after 5 s');
+  type(window, ' zzz  ');
+  tick(t, 800);
+  assert.equal(says(), '', 'the same words: nothing');
+  type(window, '');
+  tick(t, 800);
+  assert.equal(says(), 'All of them again. Fresh start.');
+  t.mock.timers.reset();
+});
+
+test('the filter from the address: no comment', async (t) => {
+  const { window, says } = await commentPage(t, `${at(repository(t).root)}&filter=mps`, [0.9, 0.9]);
+  timers(t);
+  tick(t, 1000);
+  assert.equal(says(), '');
+  type(window, 'mps ');
+  tick(t, 800);
+  assert.equal(says(), '', 'the same words as the address');
+  t.mock.timers.reset();
+});
+
+test('what the user typed is quoted as text, never markup, shortened to 30 characters', async (t) => {
+  const { window, bubble, says } = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  timers(t);
+  type(window, '<img src=x onerror=alert(1)><b>bold</b>');
+  tick(t, 800);
+  assert.equal(says(), '“<img src=x onerror=alert(1)><…”? Never heard of it.');
+  assert.equal(bubble.children.length, 0, 'no markup');
+  t.mock.timers.reset();
+});
+
+test('clicks: a skill’s file, opening its full description, its copies, the empty page; not the table or a button', async (t) => {
+  const github = await commentPage(t, at('https://github.com/JetBrains/example'), [0.9, 0.9]);
+  timers(t);
+  const { document, says } = github;
+  clickOn(document.querySelector('a.path')!);
+  assert.equal(says(), 'Opening commits. Do read it carefully.');
+  tick(t, 10_000);
+  const details = document.querySelector('.description details') as HTMLDetailsElement;
+  clickOn(details.querySelector('summary')!);
+  assert.equal(says(), 'The full story of commits. Grab a cushion.');
+  assert.equal(details.open, true);
+  tick(t, 10_000);
+  clickOn(details.querySelector('summary')!);
+  assert.equal(says(), '', 'closing it: nothing');
+  clickOn(document.querySelector('td.name')!);
+  clickOn(document.querySelector('#scan-button')!.closest('form')!.querySelector('label')!);
+  assert.equal(says(), '', 'the table, a label: nothing');
+  clickOn(document.querySelector('main')!);
+  assert.equal(says(), 'That was nothing. Literally.');
+  t.mock.timers.reset();
+
+  const local = await commentPage(t, at(repository(t).root), [0.9, 0.9]);
+  clickOn(local.document.querySelector('.copies code')!);
+  assert.equal(local.says(), 'mps-tests is in more than one place. Clever.');
+});
+
+test('about 1 in 3: a roll under 1/3 comments, one at or over it does not', async (t) => {
+  const { document, says } = await commentPage(t, '/', [0.34, 0.333], { result: false, until: '.idle' });
+  const main = document.querySelector('main')!;
+  clickOn(main);
+  assert.equal(says(), '');
+  clickOn(main);
+  assert.ok(from('emptyPage', says()), says());
+});
+
+test('at least 10 s between two comments; an action chance skips does not count', async (t) => {
+  const { document, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  timers(t);
+  const main = document.querySelector('main')!;
+  clickOn(main);
+  const first = says();
+  assert.ok(from('emptyPage', first));
+  tick(t, 9999);
+  clickOn(main);
+  assert.equal(says(), '', 'not within 10 s');
+  tick(t, 1);
+  clickOn(main);
+  assert.ok(from('emptyPage', says()));
+  tick(t, 10_000);
+  rolls(t, [0.9]);
+  clickOn(main);
+  assert.equal(says(), '', 'skipped by chance');
+  tick(t, 1);
+  clickOn(main);
+  assert.ok(from('emptyPage', says()), 'right after: a skipped action starts no wait');
+  t.mock.timers.reset();
+});
+
+test('never the same phrase twice in a row', async (t) => {
+  const { document, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  timers(t);
+  const main = document.querySelector('main')!;
+  // Even when chance picks the same one, the alpaca says another.
+  clickOn(main);
+  const first = says();
+  tick(t, 10_000);
+  clickOn(main);
+  assert.ok(from('emptyPage', says()));
+  assert.notEqual(says(), first);
+  t.mock.restoreAll();
+  const heard = [says()];
+  for (let i = 0; i < 90; i++) {
+    tick(t, 10_000);
+    clickOn(main);
+    if (says()) heard.push(says());
+  }
+  for (let i = 1; i < heard.length; i++) assert.notEqual(heard[i], heard[i - 1], `the same phrase twice: ${heard[i]}`);
+  assert.ok(heard.every((phrase) => from('emptyPage', phrase)));
+  assert.ok(new Set(heard).size > 3, `at random: ${JSON.stringify(heard)}`);
+  t.mock.timers.reset();
+});
+
+test('the comment goes after 5 s, not on a click elsewhere; a joke is no comment', async (t) => {
+  const { document, crest, says } = await commentPage(t, '/', [], { result: false, until: '.idle' });
+  timers(t);
+  clickOn(document.querySelector('main')!);
+  const comment = says();
+  assert.ok(from('emptyPage', comment));
+  assert.ok(crest.classList.contains('wobble'));
+  clickOn(document.querySelector('.idle .state-title')!);
+  assert.equal(says(), comment, 'a click elsewhere leaves it');
+  tick(t, 4999);
+  assert.equal(says(), comment);
+  tick(t, 1);
+  assert.equal(says(), '', 'gone after 5 s');
+  assert.equal(crest.classList.contains('wobble'), false);
+  tick(t, 10_000);
+  (document.querySelector('.idle button.speaker') as HTMLButtonElement).click();
+  assert.ok(JOKES.includes(document.querySelector('.idle .bubble')?.textContent ?? ''), 'the joke');
+  assert.equal(says(), '', 'no comment on the joke button');
+  t.mock.timers.reset();
 });
 
 /** `/api/scan` as the page asks for it: a stream of JSON lines. */

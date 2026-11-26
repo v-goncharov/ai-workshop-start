@@ -63,7 +63,11 @@
   <div class="textile" aria-hidden="true"></div>
 
   <header class="masthead">
-    <a class="crest" href="/" aria-hidden="true" tabindex="-1"><svg class="alpaca"><use href="#alpaca"/></svg></a>
+    <!-- The crest alpaca comments on what the user does, now and then (app.js); the bubble lets clicks through. -->
+    <div class="crest-stage">
+      <a class="crest" href="/" aria-hidden="true" tabindex="-1"><svg class="alpaca"><use href="#alpaca"/></svg></a>
+      <p class="bubble comment" aria-live="polite"></p>
+    </div>
     <div>
       <p class="wordmark"><a href="/">Skill Atlas</a></p>
       <p class="tagline">A most distinguished alpaca fetches every agent skill in a repository: name, description and a link to its <code>SKILL.md</code>.</p>
