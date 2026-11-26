@@ -2,6 +2,7 @@
 // idle, loading, error, result (with no skills, with warnings, filtered). All text goes in
 // through textContent; nothing from a repository becomes markup.
 import { filterWords, matchesFilter } from './filter.js';
+import { JOKES } from './jokes.js';
 import { PHRASES } from './phrases.js';
 
 const form = document.getElementById('scan-form');
@@ -85,16 +86,6 @@ result.addEventListener('click', (event) => {
 window.addEventListener('popstate', fromLocation);
 
 // The idle alpaca speaks: a joke in its bubble on each click, never the same twice in a row; gone after 5 s or on a click elsewhere.
-const JOKES = [
-  'What do you call an alpaca with no fleece? A bald-paca.',
-  'Why did the alpaca get the job? It was outstanding in its field.',
-  "I'd tell you a joke about llamas, but no llamas were consulted.",
-  'How do alpacas stay cool? Fleece conditioning.',
-  "What's an alpaca's favourite drink? A llama-tini. Shaken, not sheared.",
-  'Alpacas never worry. They know everything will be all wool in the end.',
-  'I asked the alpaca to fetch your skills. It said: no prob-llama.',
-  'What does an alpaca read? The SKILL.md, obviously. Impeccably.',
-];
 let lastJoke; // the index of the joke said last
 let hushing; // the timer that clears the bubble
 

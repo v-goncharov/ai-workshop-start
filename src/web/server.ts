@@ -43,6 +43,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
   '/app.js': { file: './static/app.js', type: 'text/javascript; charset=utf-8' },
   '/filter.js': { file: '../core/filter.js', type: 'text/javascript; charset=utf-8' },
   '/phrases.js': { file: './static/phrases.js', type: 'text/javascript; charset=utf-8' },
+  '/jokes.js': { file: './static/jokes.js', type: 'text/javascript; charset=utf-8' },
   '/style.css': { file: './static/style.css', type: 'text/css; charset=utf-8' },
 };
 
