@@ -26,7 +26,8 @@ Judge the comment, not the commenter: agreeing to a wrong change is worse than a
 - Merge conflicts: if `gh pr view --json mergeable` is `CONFLICTING` or the branch is behind, `git fetch fork main` and `git merge fork/main` (merge, not rebase, so review comments stay anchored and no force-push is needed). Resolve each conflict by keeping both sides' intent, not by picking one side; read what `main` changed and why. Conflicts in `spec/` get the same care as code.
 - Make the fixes from phase 2. The rules of the [implement](../implement/SKILL.md) skill apply: a behavior change updates `spec/` first and gets an integration test for each case; keep the change to what the comment asks.
 - Done means: `npm run typecheck` and `npm test` pass, and `npm run test:e2e` too if a fix or the merge touched scanning or GitHub access. Run them; don't assume.
-- Commit the merge on its own, then the fixes, with messages that say which comment each addresses. Push to the PR's branch with a plain `git push`; never force-push a branch under review.
+- Lessons: follow [memory/README.md](../../../memory/README.md). For each comment you fixed, ask whether one rule would have stopped `implement` from making that mistake. If so, add or update that lesson in `memory/`. Comments you pushed back on or asked about get no lesson.
+- Commit the merge on its own, then the fixes, then the lessons, with messages that say which comment each addresses. Push to the PR's branch with a plain `git push`; never force-push a branch under review.
 - The push is the delivery: the run is not done until the commits are on the PR. If you can't push (no permission, a local-only or patch delivery mode, a rejected push), stop before replying and report it as a failure, with the reason and where the unpushed commits are. Don't post replies that cite commits the PR doesn't have.
 
 ## 4. Reply

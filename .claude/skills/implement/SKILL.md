@@ -31,6 +31,7 @@ Take the issue from understanding to an open pull request, in five phases, in or
 
 ## 5. Pull request
 - Branch from an up-to-date `main` (the remote is `fork`) with a short descriptive name. Commit the spec, tests, code and demo scenario together with a message that says what changed and why.
+- Retro: follow [memory/README.md](../../../memory/README.md). If a check failed more than once, the user corrected you, or you had to ask something the repository could have told you, add or update a lesson in `memory/` and commit it on its own (`memory: <rule>`). If nothing went wrong, write nothing.
 - Push the branch. With a demo, publish it: `demo/publish.sh <branch> demo/out/<feature>.gif demo/out/<feature>.mp4`. This prints the `## Demo` section.
 - Open the PR with `gh pr create`. Use the style of the earlier PRs:
   - `## What`: the user-visible change, a few bullets.
