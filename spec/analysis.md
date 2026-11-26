@@ -17,12 +17,14 @@ Only the repository's **own** skills: `<skill root>/<name>/SKILL.md`.
 Skill roots: `.agents/skills`, `.claude/skills`, `.github/skills`
 ## Edge cases
 - **Duplicates**: the same name and *identical* content in several roots → **one** skill.
-  The main path follows the root order above; the others are its *copies*.
+  The main path follows the root order above; the others are its *copies*
+  (`JetBrains/MPS`: `.agents/skills/mps-tests` + `.claude/skills/mps-tests`).
   Different content → separate skills
-  (`JetBrains/MPS`: `.agents/skills/mps-tests` + `.claude/skills/mps-tests`)
 - **An unusual folder**: the repository's own workflow outside the skill roots → *skipped*
-  (`JetBrains/android`: `agent/skills/writing-lint-checks`)
+  (`JetBrains/android`: `agent/skills/writing-lint-checks`, until 2026-09-30)
 - **Part of the product**: skills shipped to users, outside the skill roots → *skipped*
   (`JetBrains/MPS`: `plugins/mcp-tools/resources/…/skills/mps-aspect-generator`)
 - **Test data**: fixtures for the project's own tests → *skipped*, silently
   (`JetBrains/koog`: `integration-tests/src/jvmTest/resources/skills/weather-retrieval`)
+## End-to-end
+The edge cases above, on the real repositories, each pinned to a commit: `tests/e2e`.

@@ -22,6 +22,7 @@ function repository(t: TestContext, files: Record<string, string>) {
 }
 
 test('duplicates: the same name and identical content in every root → one skill, the others its copies', async (t) => {
+  // JetBrains/MPS: .agents/skills/mps-tests + .claude/skills/mps-tests
   const { root, url } = repository(t, {
     '.github/skills/mps-tests/SKILL.md': MPS_TESTS,
     '.claude/skills/mps-tests/SKILL.md': MPS_TESTS,
@@ -61,7 +62,6 @@ test('duplicates: the main path follows the root order, not the alphabet', async
 });
 
 test('duplicates: the same name, different content → separate skills, no copies', async (t) => {
-  // JetBrains/MPS: .agents/skills/mps-tests + .claude/skills/mps-tests
   const { root, url } = repository(t, {
     '.agents/skills/mps-tests/SKILL.md': MPS_TESTS,
     '.claude/skills/mps-tests/SKILL.md': '---\nname: mps-tests\ndescription: Run the MPS tests from Claude.\n---\n',
