@@ -1,11 +1,11 @@
 ---
 name: address-cr
-description: Address code review comments on a pull request in Skill Atlas — fix what the reviewer got right, reply with reasons where they didn't, resolve merge conflicts with main, and push. Use when a PR gets new review comments, or when asked to "address", "handle", "fix" or "respond to" review comments or CR feedback (a PR URL, a number, or the current branch).
+description: Address code review comments on a pull request in Skill Atlas — fix what the reviewer got right, reply with reasons where they didn't, resolve merge conflicts with main, push, and merge the PR once it is approved with nothing left open. Use when a PR gets new review comments, or when asked to "address", "handle", "fix" or "respond to" review comments or CR feedback (a PR URL, a number, or the current branch).
 ---
 
 # Address CR
 
-Take the new review comments on a PR to a pushed update with a reply on every thread, in four phases, in order.
+Take the new review comments on a PR to a pushed update with a reply on every thread, then merge the PR if all's good — in five phases, in order.
 
 ## 1. Collect
 - Find the PR: the URL or number given, else the PR for the current branch (`gh pr view`). Check out its branch and pull it.
@@ -36,4 +36,18 @@ Judge the comment, not the commenter: agreeing to a wrong change is worse than a
   - Ask: the question with the options.
 - Don't resolve threads; the reviewer resolves them once they agree.
 - If you merged `main`, add one PR comment saying so and how the conflicts were resolved.
-- Tell the user the PR URL and a line per comment: fixed, pushed back or asked, and why. If a check fails or a step was skipped, say so; don't report it as done.
+
+## 5. Merge
+Merge only when all's good — every one of these holds, checked now, not assumed:
+- This run changed nothing and posted no replies: no new comments were found in phase 1, or there were none to act on. A run that pushed fixes, merged `main` or replied hands the PR back to the reviewer; don't merge on the reviewer's behalf.
+- Nothing is left open, judged against the qualifying approval (the next condition). Threads stay unresolved after they are answered — neither this skill nor `cr` resolves them — so "open" is defined by the marker phase 1 uses:
+  - A review thread is handled when it is resolved, or when its last comment carries `<!-- address-cr -->` and the qualifying approval was submitted after that comment.
+  - A review body or top-level PR comment is handled when it is the qualifying approval itself, was posted before it, or carries `<!-- address-cr -->`.
+  - Anything else is open.
+- The latest review is an approval and no later review requests changes: `reviewDecision` is `APPROVED`, or, when the reviewer is the PR author's account (GitHub then records the verdict as a `COMMENTED` review), the latest review's body states approval and no newer review or comment asks for changes. That review is the qualifying approval, and it must be of the commit being merged: its `commit.oid` (from `pullRequest.reviews`) equals the PR's `headRefOid`. GitHub keeps `APPROVED` after new pushes, so an approval of an older commit doesn't count; report that the PR is waiting for a review of the head commit.
+- Checks pass: `gh pr checks` reports every required check as passing (none failing or pending). If there are no checks, run `npm run typecheck` and `npm test` on the PR head and require both to pass.
+- GitHub can merge it: `gh pr view --json mergeable,mergeStateStatus,isDraft` shows `MERGEABLE`, a `CLEAN` (or `HAS_HOOKS`) state, and not a draft.
+
+Then `gh pr merge <number> --merge --delete-branch` (a merge commit, as the repo's history uses). Don't use `--admin` or otherwise bypass branch protection. If the merge is refused, stop and report why. If any condition fails, don't merge: say which one and what it is waiting on.
+
+Finally, tell the user the PR URL and a line per comment: fixed, pushed back or asked, and why — and whether the PR was merged, or which merge condition failed. If a check fails or a step was skipped, say so; don't report it as done.
