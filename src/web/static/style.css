@@ -280,7 +280,7 @@ button.speaker { display: block; height: auto; padding: 0; border: 0; border-rad
   transform: rotate(45deg);
 }
 /* The crest alpaca's comments: the same bubble, below the crest, its tail pointing up; above the page, but clicks go through.
-   Fixed in the window, where app.js puts it as the alpaca speaks: on a scrolled page, at the top. */
+   Fixed in the window, where app.js puts it as the alpaca speaks; on a page scrolled past the crest, beside the visitor. */
 .crest-stage { flex: none; }
 .bubble.comment {
   position: fixed;
@@ -293,6 +293,27 @@ button.speaker { display: block; height: auto; padding: 0; border: 0; border-rad
   font-size: var(--text-sm);
 }
 .bubble.comment::before { left: 30px; top: -8px; bottom: auto; transform: rotate(135deg); }
+/* The visitor: the crest's alpaca, at its size, peeking in from the bottom-left corner (away from the filter and the
+   table's links) while it comments on a page scrolled past the crest. Out of sight below the window otherwise. */
+.visitor {
+  position: fixed;
+  left: 12px;
+  bottom: -14px;
+  z-index: 5;
+  pointer-events: none;
+  visibility: hidden;
+  transform: translateY(110%);
+}
+.visitor.here { visibility: visible; transform: none; }
+.visitor .alpaca { width: 62px; height: 76px; filter: drop-shadow(0 6px 10px rgb(74 52 24 / 30%)); }
+/* Its bubble beside it, the tail pointing left at it; never wider than the window leaves. */
+.bubble.comment.visiting {
+  top: auto;
+  left: 82px;
+  bottom: 30px;
+  max-width: min(260px, calc(100vw - 94px));
+}
+.bubble.comment.visiting::before { left: -8px; top: auto; bottom: 14px; transform: rotate(45deg); }
 .ornament { color: var(--gold); letter-spacing: 0.5em; font-size: var(--text-sm); }
 .invitation {
   display: inline-block;
@@ -446,6 +467,7 @@ p.no-match { margin-top: var(--space-6); color: var(--text-muted); }
   .idle .hero { animation: sway 5s ease-in-out infinite alternate; transform-origin: 50% 100%; }
   .speaker.wobble .hero { animation: wobble 0.6s ease-in-out; }
   .crest.wobble .alpaca { animation: wobble 0.6s ease-in-out; }
+  .visitor { transition: transform 350ms ease-out, visibility 350ms; }
   .trotter use { animation: trot 0.45s ease-in-out infinite alternate; }
   .trail.resting .trotter use { animation: none; }
   .trail.roaming .trotter { animation: roam 5s linear infinite; transition: none; }

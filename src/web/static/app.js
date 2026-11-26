@@ -122,9 +122,11 @@ result.addEventListener('animationend', (event) => {
 });
 
 // The crest alpaca comments on what the user does: about 1 in 3 actions, at least 10 s apart, a line from phrases.js,
-// never the same one twice in a row; gone after 5 s. What the user did goes in as text, shortened.
+// never the same one twice in a row; gone after 5 s. What the user did goes in as text, shortened. With the crest
+// scrolled out of view, a visitor comes on screen to say it.
 const crest = document.querySelector('.crest');
 const comment = document.querySelector('.comment');
+const visitor = document.querySelector('.visitor');
 const CHANCE = 1 / 3;
 const COOLDOWN = 10_000;
 let lastRemarkAt = -Infinity; // when the alpaca last commented
@@ -147,11 +149,8 @@ function remark(categories, values = {}) {
   const phrase = pick(PHRASES[pick(categories)].filter((line) => line !== lastPhrase));
   lastPhrase = phrase;
   lastRemarkAt = Date.now();
-  // Below the crest; at the top of the window when the page is scrolled past it, so it is always seen.
-  const { bottom, left } = crest.getBoundingClientRect();
-  comment.style.setProperty('--top', `${Math.max(bottom + 12, 12)}px`);
-  comment.style.setProperty('--left', `${Math.max(left, 12)}px`);
   comment.textContent = phrase.replace(/\{(\w+)\}/g, (_, key) => (key === 'text' ? `“${shorten(values[key] ?? '')}”` : shorten(values[key] ?? '')));
+  place();
   crest.classList.remove('wobble');
   void crest.getBoundingClientRect();
   crest.classList.add('wobble');
@@ -159,7 +158,30 @@ function remark(categories, values = {}) {
   quieting = setTimeout(() => {
     comment.textContent = '';
     crest.classList.remove('wobble');
+    place();
   }, 5000);
+}
+
+/**
+ * Where the comment is said: below the crest while it is in view; with the crest scrolled out of view (more than half
+ * of it), by the visitor, which peeks in from the window's corner with the bubble beside it. Again on each scroll.
+ */
+function place() {
+  const speaking = comment.textContent !== '';
+  const { top, bottom, left } = crest.getBoundingClientRect();
+  const middle = (top + bottom) / 2;
+  const away = speaking && (middle < 0 || middle > window.innerHeight);
+  visitor?.classList.toggle('here', away);
+  comment.classList.toggle('visiting', away);
+  if (speaking && !away) {
+    comment.style.setProperty('--top', `${Math.max(bottom + 12, 12)}px`);
+    comment.style.setProperty('--left', `${Math.max(left, 12)}px`);
+  }
+}
+
+if (comment) {
+  window.addEventListener('scroll', place, { passive: true });
+  window.addEventListener('resize', place, { passive: true });
 }
 
 crest?.addEventListener('animationend', (event) => {
