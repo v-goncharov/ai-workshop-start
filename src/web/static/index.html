@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Skill Atlas</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <p class="wordmark"><a href="/">Skill Atlas</a></p>
+    <p class="tagline">Every agent skill in a repository: name, description and a link to its <code>SKILL.md</code>.</p>
+  </header>
+
+  <main>
+    <form id="scan-form" class="scan" novalidate>
+      <label for="input">Repository</label>
+      <div class="scan-row">
+        <input id="input" name="input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="https://github.com/JetBrains/kotlin" aria-describedby="input-hint input-error">
+        <button id="scan-button" type="submit" class="primary">Scan repository</button>
+      </div>
+      <p id="input-error" class="field-error" hidden></p>
+      <p id="input-hint" class="hint">A GitHub URL (add <code>/tree/&lt;branch or commit&gt;</code> for another ref) or a directory on this machine.</p>
+    </form>
+
+    <section id="result" aria-live="polite" aria-busy="false">
+      <div class="state" data-state="idle">
+        <h1 class="state-title">Nothing scanned yet</h1>
+        <p>Skill Atlas lists each <code>&lt;root&gt;/&lt;name&gt;/SKILL.md</code> under <code>.agents/skills</code>, <code>.claude/skills</code> and <code>.github/skills</code>, linked to the file at the scanned commit. Nothing is stored; every scan reads the repository again.</p>
+        <p><a id="example" href="/?input=https://github.com/JetBrains/MPS">Scan JetBrains/MPS as an example</a></p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

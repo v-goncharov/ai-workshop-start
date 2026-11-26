@@ -1,0 +1,27 @@
+# Web view
+`./skill-atlas serve [--port <n>]` serves the same scan in the browser, at `http://127.0.0.1:4400` by default.
+It listens on *127.0.0.1 only*: the page can scan local directories.
+`GITHUB_TOKEN` and local directories work as they do in the CLI. *Nothing is stored*; every scan reads the repository again.
+## Page
+- One field, **Repository**: a GitHub URL (`…/tree/<ref>` too) or a directory; `?input=<it>` in the address, so a scan can be shared and reloaded
+- The repository, the skill count, the *scanned commit* (or "local directory") and how long it took
+- A table, in the CLI's order: **name**, the description's *first sentence* (the full one on request), the **file**
+  linked to the scanned commit, and its *copies*. Local files: the path, not a link (browsers do not open `file://` from a page)
+- A filter by name, description or path
+## States
+- **Idle**: what is scanned, and one example
+- **Empty field** → "Enter a GitHub URL or a directory path.", no request
+- **Loading**: skeleton rows in the table's layout
+- **Error**: the CLI's message and what to do next (rate limit → `GITHUB_TOKEN`); *Scan again*
+- **No skills**: which folders count
+- **Warnings**: listed above the table, as the CLI prints them to stderr
+- **No filter match**: says so, with a way to clear the filter
+## API
+`GET /api/scan?input=<GitHub URL | directory>` → `200` `{ repository, skills, warnings }`;
+each skill: `name`, `path`, `summary` (the first sentence), `description`, `link`, `copies`.
+- No input, or the CLI's error (unreachable repository, rate limit…) → `400` `{ error }`, the CLI's message
+- An unexpected failure → `500` `{ error }`, a short message; the details go to the server's stderr
+- Anything else → `404`; anything but `GET` → `405`
+## Command line
+- `--port 0`: any free port; it prints the address
+- A port in use → a clear message, exit code 1

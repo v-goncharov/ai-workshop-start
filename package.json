@@ -2,7 +2,7 @@
   "name": "skill-atlas",
   "version": "0.1.0",
   "private": true,
-  "description": "Skill Atlas: every SKILL.md in a repository, in the terminal.",
+  "description": "Skill Atlas: every SKILL.md in a repository, in the terminal and the browser.",
   "type": "module",
   "bin": {
     "skill-atlas": "src/cli.ts"

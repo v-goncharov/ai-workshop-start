@@ -1,5 +1,5 @@
 # Command line
-`./skill-atlas scan <GitHub URL | directory>`
+`./skill-atlas scan <GitHub URL | directory>`; `./skill-atlas serve`: the [web view](web.md)
 A GitHub URL scans the default branch; `…/tree/<commit or branch>` scans that one
 (listed through the tree: code search sees only the default branch).
 Prints the result **at once**; *nothing is stored*.
