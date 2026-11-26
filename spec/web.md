@@ -1,6 +1,8 @@
 # Web view
 `./skill-atlas serve [--port <n>]` serves the same scan in the browser, at `http://127.0.0.1:4400` by default.
 It listens on *127.0.0.1 only*: the page can scan local directories.
+Against DNS rebinding, it answers only `Host: 127.0.0.1:<port>` or `localhost:<port>`; anything else → `403`.
+A scan asked for by another site (`Sec-Fetch-Site` neither `same-origin` nor `none`) → `403`.
 `GITHUB_TOKEN` and local directories work as they do in the CLI. *Nothing is stored*; every scan reads the repository again.
 ## Page
 - One field, **Repository**: a GitHub URL (`…/tree/<ref>` too) or a directory; `?input=<it>` in the address, so a scan can be shared and reloaded

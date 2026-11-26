@@ -49,11 +49,31 @@ export function listen(server: Server, port: number): Promise<string> {
   });
 }
 
+/**
+ * Listening on 127.0.0.1 is not enough: a page on another site can rebind its own host name to
+ * 127.0.0.1 and then read the answers as same-origin. Only this machine's own names, at the port
+ * the server listens on, are answered.
+ */
+function isOwnHost(request: IncomingMessage): boolean {
+  const port = request.socket.localPort;
+  return request.headers.host === `127.0.0.1:${port}` || request.headers.host === `localhost:${port}`;
+}
+
+/** A scan only for the page itself, or for an address typed in the browser; not for other sites. */
+function isOwnSite(request: IncomingMessage): boolean {
+  const site = request.headers['sec-fetch-site'];
+  return site === undefined || site === 'same-origin' || site === 'none';
+}
+
 async function handle(request: IncomingMessage, response: ServerResponse, options: WebOptions) {
+  if (!isOwnHost(request)) {
+    return json(response, 403, { error: 'Skill Atlas answers only at 127.0.0.1 or localhost. Open the address skill-atlas serve printed.' });
+  }
   const url = new URL(request.url ?? '/', 'http://localhost');
   if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { error: 'Only GET is supported.' });
 
   if (url.pathname === '/api/scan') {
+    if (!isOwnSite(request)) return json(response, 403, { error: 'Scans are answered only for the Skill Atlas page itself.' });
     const input = url.searchParams.get('input')?.trim();
     if (!input) return json(response, 400, { error: 'Enter a GitHub URL or a directory path.' });
     try {

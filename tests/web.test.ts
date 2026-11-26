@@ -2,6 +2,7 @@
 // serve command as a user runs it.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { request } from 'node:http';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
@@ -111,6 +112,47 @@ test('anything else → 404; anything but GET → 405', async () => {
   assert.equal((await get('/no-such-page')).status, 404);
   assert.equal((await get('/static/../server.ts')).status, 404);
   assert.equal((await get('/api/scan?input=x', { method: 'POST' })).status, 405);
+});
+
+/** A raw GET with the headers as given: fetch would not let a test set Host. */
+function rawGet(path: string, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+  const { port } = new URL(address);
+  return new Promise((resolve, reject) => {
+    request({ host: '127.0.0.1', port, path, headers }, (response) => {
+      let body = '';
+      response.on('data', (chunk) => (body += chunk));
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body }));
+    })
+      .on('error', reject)
+      .end();
+  });
+}
+
+test('DNS rebinding: another host name → 403, before anything is scanned or served', async () => {
+  const { port } = new URL(address);
+  const path = `/api/scan?input=${encodeURIComponent(FIXTURE)}`;
+  for (const host of [`attacker.example:${port}`, 'attacker.example', '127.0.0.1', `127.0.0.1:${Number(port) + 1}`, `localhost.attacker.example:${port}`]) {
+    for (const target of [path, '/']) {
+      const answer = await rawGet(target, { host });
+      assert.equal(answer.status, 403, `${host} ${target}`);
+      assert.doesNotMatch(answer.body, /SKILL\.md/);
+    }
+  }
+  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`]) {
+    assert.equal((await rawGet(path, { host })).status, 200, host);
+  }
+});
+
+test('a scan asked for by another site → 403; by the page or the address bar → answered', async () => {
+  const { port } = new URL(address);
+  const path = `/api/scan?input=${encodeURIComponent(FIXTURE)}`;
+  const host = `127.0.0.1:${port}`;
+  for (const site of ['cross-site', 'same-site']) {
+    assert.equal((await rawGet(path, { host, 'sec-fetch-site': site })).status, 403, site);
+  }
+  for (const site of ['same-origin', 'none']) {
+    assert.equal((await rawGet(path, { host, 'sec-fetch-site': site })).status, 200, site);
+  }
 });
 
 test('a port in use → a clear message', async () => {
