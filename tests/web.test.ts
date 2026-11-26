@@ -15,6 +15,7 @@ import { AtlasError } from '../src/core/errors.ts';
 import { scanOwner } from '../src/core/owner.ts';
 import { replay } from '../src/core/replay.ts';
 import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } from '../src/web/server.ts';
+import { JOKES } from '../src/web/static/jokes.js';
 import { PHRASES } from '../src/web/static/phrases.js';
 import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
 
@@ -60,7 +61,7 @@ test('serve listens on 127.0.0.1 only', () => {
 });
 
 test('the page, its script and its styles', async () => {
-  for (const [path, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/phrases.js', 'text/javascript'], ['/style.css', 'text/css']]) {
+  for (const [path, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/phrases.js', 'text/javascript'], ['/jokes.js', 'text/javascript'], ['/style.css', 'text/css']]) {
     const response = await get(path);
     assert.equal(response.status, 200, path);
     assert.match(response.headers.get('content-type') ?? '', new RegExp(`^${type}`), path);
@@ -298,7 +299,7 @@ async function page(t: TestContext, path: string, { result = true, until = '#fil
   // The scripts as served, side by side as the browser resolves them: app.js imports ./filter.js.
   const scripts = mkdtempSync(join(tmpdir(), 'skill-atlas-page-'));
   t.after(() => rmSync(scripts, { recursive: true, force: true }));
-  for (const file of ['app.js', 'filter.js', 'phrases.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
+  for (const file of ['app.js', 'filter.js', 'phrases.js', 'jokes.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
   before();
   await import(pathToFileURL(join(scripts, 'app.js')).href);
   const document = window.document;
@@ -435,17 +436,20 @@ test('the alpaca stands by an error and by "No skills"', async (t) => {
   assert.ok(empty.document.querySelector('.state svg.alpaca use[href="#alpaca"]'), 'the alpaca by "No skills"');
 });
 
-// The alpaca speaks (spec/web.md, "Look"): the idle alpaca, a button; its jokes in a speech bubble.
-const JOKES = [
-  'What do you call an alpaca with no fleece? A bald-paca.',
-  'Why did the alpaca get the job? It was outstanding in its field.',
-  "I'd tell you a joke about llamas, but no llamas were consulted.",
-  'How do alpacas stay cool? Fleece conditioning.',
-  "What's an alpaca's favourite drink? A llama-tini. Shaken, not sheared.",
-  'Alpacas never worry. They know everything will be all wool in the end.',
-  'I asked the alpaca to fetch your skills. It said: no prob-llama.',
-  'What does an alpaca read? The SKILL.md, obviously. Impeccably.',
-];
+// The alpaca speaks (spec/web.md, "Look"): the idle alpaca, a button; its jokes, the page's own (jokes.js), in a speech bubble.
+test('the jokes: at least 38, no two alike, each short enough for the bubble', async () => {
+  assert.ok(Array.isArray(JOKES));
+  assert.ok(JOKES.length >= 38, `${JOKES.length} jokes`);
+  const alike = (joke: string) => joke.toLowerCase().replace(/[^a-z]/g, '');
+  assert.equal(new Set(JOKES.map(alike)).size, JOKES.length, 'two jokes alike');
+  for (const joke of JOKES) {
+    assert.equal(typeof joke, 'string');
+    assert.equal(joke, joke.trim(), joke);
+    assert.ok(joke.length > 0 && joke.length <= 80, `${joke.length} characters: ${joke}`);
+  }
+  // The page serves the same list it imports.
+  assert.match(await (await get('/jokes.js')).text(), /export const JOKES/);
+});
 
 /** The idle page: its talking alpaca and the bubble it speaks in. */
 async function idlePage(t: TestContext) {

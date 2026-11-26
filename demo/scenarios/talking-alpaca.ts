@@ -1,4 +1,4 @@
-// The alpaca speaks (spec/web.md, "Look"): the idle alpaca is a button; each click, a dad joke in a speech bubble,
+// The alpaca speaks (spec/web.md, "Look"): the idle alpaca is a button; each click, one of its 38 dad jokes in a speech bubble,
 // never the same twice in a row; gone after 5 s or on a click elsewhere. The crest stays a link home.
 import type { Demo } from '../record.ts';
 
@@ -22,6 +22,13 @@ export default async function talkingAlpaca({ page, caption, pause, click }: Dem
   joke = await says(joke);
   await caption('Another click, another joke', 'Never the same one twice in a row');
   await pause(3000);
+
+  for (let i = 0; i < 3; i++) {
+    await click(speaker);
+    joke = await says(joke);
+    if (i === 0) await caption('38 jokes to pick from', 'Short alpaca puns, no two alike: they rarely come round again');
+    await pause(1800);
+  }
 
   await speaker.focus();
   await page.keyboard.press('Enter');

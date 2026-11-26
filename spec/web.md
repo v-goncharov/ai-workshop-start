@@ -22,7 +22,8 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
 - A second one *trots along an owner's progress bar*: back and forth while listing, at d of n while scanning, standing still during a wait
 - Both are drawn once in the page (`<symbol id="alpaca">`, `<symbol id="alpaca-trot">`) and coloured by `style.css`: no inline styles, no images to fetch
 - *The idle alpaca speaks*: it is a real button, "Ask the alpaca for a joke". A click (tap, Enter, Space) shows an alpaca dad joke
-  in a speech bubble beside it, picked at random from the ones in `app.js`, *never the same one twice in a row*; the alpaca wobbles.
+  in a speech bubble beside it, picked at random from the pre-written ones in `jokes.js` (*at least 38*, no two alike, each at most 80 characters
+  so the bubble stays a few lines), *never the same one twice in a row*; the alpaca wobbles.
   Another click on it, another joke. The bubble goes after 5 s, or on a click anywhere else.
   The bubble is an `aria-live="polite"` region, so screen readers announce the joke. No wobble under `prefers-reduced-motion`
 - The crest stays a plain link home (a click on it is no joke and no comment)
@@ -68,6 +69,7 @@ An owner URL → `200` `{ owner, repositories, skipped, warnings }`: `owner` is 
 - An unexpected failure → `500` `{ error }`, a short message; the details go to the server's stderr
 - `/filter.js`: the CLI's filter module, `src/core/filter.js`, as the page loads it
 - `/phrases.js`: the alpaca's comments, `src/web/static/phrases.js`
+- `/jokes.js`: the idle alpaca's jokes, `src/web/static/jokes.js`
 - Anything else → `404`; anything but `GET` → `405`
 ## Command line
 - `--port 0`: any free port; it prints the address
