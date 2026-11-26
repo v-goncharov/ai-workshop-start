@@ -92,3 +92,30 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
     message: 'GitHub rate limit reached; set GITHUB_TOKEN',
   });
 });
+
+test('…/tree/<commit> scans that commit, through the tree even with a token: code search sees only the default branch', async () => {
+  const commit = '1111111111111111111111111111111111111111';
+  const pinned = replay({
+    'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
+    [`https://api.github.com/repos/JetBrains/example/commits/${commit}`]: { status: 200, body: { sha: commit } },
+    [`https://api.github.com/repos/JetBrains/example/git/trees/${commit}?recursive=1`]: {
+      status: 200,
+      body: { truncated: false, tree: [{ path: '.claude/skills/commits/SKILL.md', mode: '100644', type: 'blob', sha: 'a' }] },
+    },
+    [`https://raw.githubusercontent.com/JetBrains/example/${commit}/.claude/skills/commits/SKILL.md`]: {
+      status: 200,
+      body: '---\nname: commits\ndescription: Write commits.\n---\n',
+    },
+  });
+  const source = await openGitHub(`https://github.com/JetBrains/example/tree/${commit}/`, { fetch: pinned, token: 'test' });
+  assert.equal(source.repository.commit, commit);
+  assert.deepEqual(source.paths, ['.claude/skills/commits/SKILL.md']);
+
+  const missing = replay({
+    'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
+    'https://api.github.com/repos/JetBrains/example/commits/no-such-ref': { status: 404, body: { message: 'Not Found' } },
+  });
+  await assert.rejects(openGitHub('https://github.com/JetBrains/example/tree/no-such-ref', { fetch: missing }), {
+    message: 'Not found in https://github.com/JetBrains/example: no-such-ref',
+  });
+});
