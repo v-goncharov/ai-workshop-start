@@ -13,11 +13,14 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 …
 ```
 
+Every repository of an organization or user at once: `./skill-atlas scan https://github.com/JetBrains`. It skips
+forks, archived and empty repositories and prints only the repositories with skills, under one summary line.
+
 The same scan in the browser: `./skill-atlas serve` starts the web view at http://127.0.0.1:4400
 (`--port <n>` for another port). Paste a GitHub URL or a local directory; `?input=` keeps it in the
 address, so a scan can be shared and reloaded.
 
-Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
+Set `GITHUB_TOKEN` for a higher GitHub rate limit (an organization needs a few requests per repository) and private repositories. `npm test` runs the tests.
 
 - [spec/](spec/): what it does; [spec/web.md](spec/web.md): the web view. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.

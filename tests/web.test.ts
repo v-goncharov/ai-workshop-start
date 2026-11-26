@@ -8,8 +8,10 @@ import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { AtlasError } from '../src/core/errors.ts';
-import { createWebServer, listen, type ScanResponse } from '../src/web/server.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open } from './helpers.ts';
+import { scanOwner } from '../src/core/owner.ts';
+import { replay } from '../src/core/replay.ts';
+import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } from '../src/web/server.ts';
+import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open } from './helpers.ts';
 
 const logged: string[] = [];
 const server = createWebServer({
@@ -17,6 +19,7 @@ const server = createWebServer({
     if (input === 'crash') throw new Error('boom');
     return open(input);
   },
+  scanOwner: (input) => scanOwner(input, { fetch: replay(acme()) }),
   log: (text) => logged.push(text),
 });
 const address = await listen(server, 0);
@@ -75,6 +78,50 @@ test('a local directory: sorted by name as the CLI prints it, with the warning f
   assert.equal(body.skills[2].summary, '');
   assert.equal(body.warnings.length, 1);
   assert.equal(`warning: ${body.warnings[0]}`, cli.stderr);
+});
+
+test('an owner: { owner, repositories, skipped, warnings }, the repositories with skills as the CLI prints them', async () => {
+  const response = await scan('https://github.com/acme');
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as OwnerScanResponse;
+  assert.deepEqual(Object.keys(body), ['owner', 'repositories', 'skipped', 'warnings']);
+  assert.deepEqual(body.owner, { id: 'acme', url: 'https://github.com/acme', scanned: 5 });
+  assert.deepEqual(body.skipped, { forks: 94, archived: 1, empty: 1 });
+  assert.deepEqual(body.repositories.map(({ repository }) => repository.id), ['acme/MPS', 'acme/api', 'acme/huge']);
+  assert.deepEqual(body.repositories[0], {
+    repository: { id: 'acme/MPS', url: 'https://github.com/acme/MPS', commit: 'mps1', local: false },
+    skills: [
+      {
+        id: 'acme/MPS:.agents/skills/mps-tests/SKILL.md',
+        name: 'mps-tests',
+        path: '.agents/skills/mps-tests/SKILL.md',
+        summary: 'Run the MPS tests.',
+        description: 'Run the MPS tests.',
+        link: 'https://github.com/acme/MPS/blob/mps1/.agents/skills/mps-tests/SKILL.md',
+        copies: ['.claude/skills/mps-tests/SKILL.md'],
+      },
+    ],
+  });
+  const cli = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme()) });
+  assert.deepEqual(body.warnings.map((warning) => `warning: ${warning}`), cli.stderr.split('\n'));
+});
+
+test('an owner’s errors → 400 with the CLI’s message', async () => {
+  const tree = await scan('https://github.com/acme/tree/main');
+  assert.equal(tree.status, 400);
+  assert.deepEqual(await tree.json(), {
+    error: "…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: https://github.com/acme/tree/main",
+  });
+  const offline = await scan('https://github.com/not-answered');
+  assert.equal(offline.status, 400);
+  assert.deepEqual(await offline.json(), { error: 'Cannot reach GitHub: not recorded: https://api.github.com/orgs/not-answered/repos?per_page=100&page=1' });
+});
+
+test('the page takes an owner URL and renders one table per repository', async () => {
+  const page = await (await get('/')).text();
+  assert.match(page, /https:\/\/github\.com\/&lt;owner&gt;/);
+  const script = await (await get('/app.js')).text();
+  assert.match(script, /function showOwnerResult\(/);
 });
 
 test('no skills: an empty list, not an error', async () => {
