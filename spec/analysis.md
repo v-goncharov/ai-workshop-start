@@ -43,7 +43,8 @@ Every repository is scanned on its **default branch**, exactly as a single one i
 the same skill roots, edge cases, duplicates and links pinned to its commit.
 ### Which repositories
 - The owner's repositories from the GitHub API, every page: `/orgs/<owner>/repos`, else `/users/<owner>/repos`
-  (else `/user/repos?affiliation=owner` when the token is the user's own, below)
+  (else `/user/repos?affiliation=owner` when the token is the user's own, below).
+  The first page's `Link` names the last one: the rest are asked for **at once**, 8 at a time, kept in GitHub's order
 - **Skipped**: forks, archived repositories, and empty ones (GitHub has no commit for them).
   The summary gives the counts; *no warning* for each
 - With `GITHUB_TOKEN`: the private repositories the token can see too. An organization's are listed with the rest.
@@ -54,12 +55,18 @@ the same skill roots, edge cases, duplicates and links pinned to its commit.
 - Unknown owner → `Owner not found: https://github.com/<owner>`, exit code 1
 - `…/tree/<ref>` on an owner → `…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: <input>`, exit code 1
 - **One repository fails** (unreachable, a root too large…) → a *warning* naming it; the scan goes on
-- **Rate limit**: a repository takes at least 2 API requests. Before scanning, if the remaining budget
+- **Rate limit**: a repository takes at least 1 API request (below). Before scanning, if the remaining budget
   (`/rate_limit`, which costs none) is smaller → stop: `<owner> has <n> repositories to scan, but only <r> GitHub API requests remain
-  (at least 2 for each); set GITHUB_TOKEN`, `<n>` without forks and archived ones (with a token: `try again after <yyyy-mm-dd hh:mm> UTC`, when the limit resets), exit code 1.
+  (at least 1 for each); set GITHUB_TOKEN`, `<n>` without forks and archived ones (with a token: `try again after <yyyy-mm-dd hh:mm> UTC`, when the limit resets), exit code 1.
   Hitting the limit midway → the same message, exit code 1, *no partial output*.
   The [secondary limit](#details) midway is waited out; if it stops the scan, its own message (the budget is not the problem)
-- Repositories are scanned **concurrently**, 4 at a time; the order of the output stays the same
+- Repositories are scanned **concurrently**, 8 at a time; the order of the output stays the same
+### Requests for each repository
+- Its branch's top-level tree by name, `git/trees/<default branch>`: GitHub answers with the commit too.
+  No skill root there (most repositories) → that request, and one for each top folder of a root that is (`.github`): *not* its commit
+- A skill root there → its commit too, `commits/<default branch>`, to pin the links. A different commit (the branch moved on
+  in between) → scanned at that commit, as a single repository is
+- The tree not found by name (`404`) or an empty repository (`409`) → opened as a single repository is: empty is skipped, the rest a warning
 ## End-to-end
 The edge cases above, on the real repositories, each pinned to a commit: `tests/e2e`.
 Not a whole owner: its repositories change, so it cannot be pinned.

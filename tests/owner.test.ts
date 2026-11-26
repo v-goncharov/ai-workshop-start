@@ -58,7 +58,7 @@ test('one repository fails, or has a root too large → a warning naming it; the
   assert.equal(
     scanned.stderr,
     [
-      'warning: acme/broken: GitHub answered 500 for https://api.github.com/repos/acme/broken/git/trees/b0: Server Error; skipped',
+      'warning: acme/broken: GitHub answered 500 for https://api.github.com/repos/acme/broken/git/trees/main: Server Error; skipped',
       'warning: acme/huge: .claude/skills has too many files to list at once; some of its skills may be missing',
     ].join('\n'),
   );
@@ -256,20 +256,20 @@ test('…/tree/<ref> on an owner → a clear message, exit code 1', () => {
 test('rate limit: more repositories than the remaining budget allows → stop before scanning', async () => {
   // 6 to scan: whether one is empty shows only when it is scanned.
   const asked: string[] = [];
-  const recorded = replay(acme({ remaining: 11 }));
+  const recorded = replay(acme({ remaining: 5 }));
   const fetch: Fetch = (url, init) => (asked.push(url), recorded(url, init));
   const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch });
   assert.equal(scanned.code, 1);
   assert.equal(scanned.stdout, '');
-  assert.equal(scanned.stderr, 'acme has 6 repositories to scan, but only 11 GitHub API requests remain (at least 2 for each); set GITHUB_TOKEN');
+  assert.equal(scanned.stderr, 'acme has 6 repositories to scan, but only 5 GitHub API requests remain (at least 1 for each); set GITHUB_TOKEN');
   assert.deepEqual(asked.filter((url) => url.includes('/repos/acme/')), []);
 
-  const withToken = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme({ remaining: 11 })), token: 'secret' });
+  const withToken = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme({ remaining: 5 })), token: 'secret' });
   assert.equal(withToken.code, 1);
-  assert.match(withToken.stderr, /^acme has 6 repositories to scan, but only 11 GitHub API requests remain \(at least 2 for each\); try again after 2026-11-18 11:06 UTC$/);
+  assert.match(withToken.stderr, /^acme has 6 repositories to scan, but only 5 GitHub API requests remain \(at least 1 for each\); try again after 2026-11-18 11:06 UTC$/);
 
   // Exactly enough: the scan goes on.
-  assert.equal((await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme({ remaining: 12 })) })).code, 0);
+  assert.equal((await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme({ remaining: 6 })) })).code, 0);
 });
 
 test('rate limit hit midway → the same message, exit code 1, no partial output', async () => {
@@ -288,7 +288,7 @@ test('rate limit hit midway → the same message, exit code 1, no partial output
   const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch });
   assert.equal(scanned.code, 1);
   assert.equal(scanned.stdout, '');
-  assert.equal(scanned.stderr, 'acme has 6 repositories to scan, but only 0 GitHub API requests remain (at least 2 for each); set GITHUB_TOKEN');
+  assert.equal(scanned.stderr, 'acme has 6 repositories to scan, but only 0 GitHub API requests remain (at least 1 for each); set GITHUB_TOKEN');
 });
 
 test('the secondary rate limit midway → waited out; the scan goes on as if nothing happened', async () => {
@@ -352,17 +352,28 @@ test('progress for a user: the first page told once, though /orgs/ is asked firs
   assert.deepEqual(seen, [{ stage: 'listing', page: 1 }, { stage: 'scanning', done: 0, total: 0 }]);
 });
 
-test('repositories are scanned concurrently, a few at a time; the order of the output stays the same', async () => {
+/** jane: `count` repositories, none with a skill, listed in one page. */
+function many(count: number): Recording {
+  const ids = Array.from({ length: count }, (_, index) => `jane/r-${String(index).padStart(2, '0')}`);
+  return {
+    ...NOT_AN_ORGANIZATION,
+    'https://api.github.com/users/jane/repos?per_page=100&page=1': { status: 200, body: ids.map((id) => listed(id)) },
+    ...budget(5000),
+    ...Object.assign({}, ...ids.map((id) => recordRepository(id, { '.github/workflows/ci.yml': '' }))),
+  };
+}
+
+test('repositories are scanned concurrently, 8 at a time; the order of the output stays the same', async () => {
   const recorded = replay(acme());
   const active = new Map<string, number>();
   let most = 0;
   const fetch: Fetch = async (url, init) => {
-    const repository = /\/repos\/acme\/([\w.-]+)\/|githubusercontent\.com\/acme\/([\w.-]+)\//.exec(url);
+    const repository = /\/repos\/(?:acme|jane)\/([\w.-]+)\/|githubusercontent\.com\/(?:acme|jane)\/([\w.-]+)\//.exec(url);
     const id = repository?.[1] ?? repository?.[2];
     if (id) active.set(id, (active.get(id) ?? 0) + 1);
     most = Math.max(most, active.size);
     // The first repositories answer last.
-    await new Promise((resolve) => setTimeout(resolve, id === 'no-skills' || id === 'MPS' ? 30 : 1));
+    await new Promise((resolve) => setTimeout(resolve, id === 'no-skills' || id === 'MPS' || id === 'r-00' ? 30 : 1));
     try {
       return await recorded(url, init);
     } finally {
@@ -375,8 +386,93 @@ test('repositories are scanned concurrently, a few at a time; the order of the o
   };
   const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch });
   assert.equal(scanned.code, 0, scanned.stderr);
-  assert.ok(most > 1 && most <= 4, `${most} repositories at once`);
+  assert.ok(most > 1, `${most} repositories at once`);
   assert.equal(scanned.stdout, (await atlas(['scan', 'https://github.com/acme'], { fetch: replay(acme()) })).stdout);
+
+  // 20 repositories: never more than 8 at once.
+  most = 0;
+  const twenty = replay(many(20));
+  const result = await scanOwner('https://github.com/jane', { fetch: (url, init) => fetch(url, init).catch(() => twenty(url, init)) });
+  assert.equal(result.scanned, 20);
+  assert.equal(most, 8);
+});
+
+test('a repository without a skill root: one request for its branch\'s tree, and one for each top folder of a root; not its commit', async () => {
+  const asked: string[] = [];
+  const recorded = replay(many(1));
+  await scanOwner('https://github.com/jane', { fetch: (url, init) => (asked.push(url), recorded(url, init)) });
+  assert.deepEqual(
+    asked.filter((url) => url.includes('/repos/jane/r-00')),
+    ['https://api.github.com/repos/jane/r-00/git/trees/main', 'https://api.github.com/repos/jane/r-00/git/trees/c0ffee-.github'],
+  );
+});
+
+test('a repository with skills: the links pinned to the commit its branch\'s tree named, once its commit says the same', async () => {
+  const asked: string[] = [];
+  const recorded = replay(acme());
+  const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch: (url, init) => (asked.push(url), recorded(url, init)) });
+  assert.equal(scanned.stdout, ACME_STDOUT);
+  // The tree is asked for by the branch's name only: not again by the commit.
+  assert.deepEqual(
+    asked.filter((url) => url.startsWith('https://api.github.com/repos/acme/api/') && !url.includes('?recursive')),
+    ['https://api.github.com/repos/acme/api/git/trees/main', 'https://api.github.com/repos/acme/api/git/trees/a1-.github', 'https://api.github.com/repos/acme/api/commits/main'],
+  );
+});
+
+test('the branch moved on between its tree and its commit → scanned at the commit, as a single repository is', async () => {
+  const recording = acme();
+  // The tree named a1; the branch is at a2 by the time its commit is asked for.
+  Object.assign(recording, recordRepository('acme/api', { '.github/skills/api-docs/SKILL.md': '---\nname: api-docs\ndescription: Document the API, newer.\n---\n' }, { commit: 'a2' }));
+  recording['https://api.github.com/repos/acme/api/git/trees/main'] = acme()['https://api.github.com/repos/acme/api/git/trees/main'];
+  const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(recording) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.match(scanned.stdout, /\nacme\/api · 1 skill\napi-docs — Document the API, newer\.\n {2}https:\/\/github\.com\/acme\/api\/blob\/a2\/\.github\/skills\/api-docs\/SKILL\.md\n/);
+});
+
+test('an empty repository, or a branch whose tree is not found by name → opened as a single one: empty is skipped, the rest a warning', async () => {
+  const recording = acme();
+  recording['https://api.github.com/repos/acme/no-skills/git/trees/main'] = { status: 404, body: { message: 'Not Found' } };
+  const scanned = await atlas(['scan', 'https://github.com/acme'], { fetch: replay(recording) });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  // no-skills is still scanned, by its commit.
+  assert.equal(scanned.stdout, ACME_STDOUT);
+});
+
+test('more pages than one: the last one GitHub names (Link) → the rest asked for at once, told as they come, in GitHub\'s order', async () => {
+  const ids = Array.from({ length: 250 }, (_, index) => `jane/r-${String(index).padStart(3, '0')}`);
+  const page = (number: number) => ids.slice((number - 1) * 100, number * 100).map((id) => listed(id, { fork: true }));
+  const users = 'https://api.github.com/users/jane/repos?per_page=100';
+  const recording: Recording = {
+    ...NOT_AN_ORGANIZATION,
+    [`${users}&page=1`]: {
+      status: 200,
+      body: page(1),
+      headers: { link: '<https://api.github.com/user/1/repos?per_page=100&page=2>; rel="next", <https://api.github.com/user/1/repos?per_page=100&page=3>; rel="last"' },
+    },
+    [`${users}&page=2`]: { status: 200, body: page(2) },
+    [`${users}&page=3`]: { status: 200, body: page(3) },
+    ...budget(5000),
+  };
+  const recorded = replay(recording);
+  let pending = 0;
+  let most = 0;
+  const fetch: Fetch = async (url, init) => {
+    const listing = url.startsWith(users);
+    if (listing) most = Math.max(most, ++pending);
+    // Page 2 answers last.
+    await new Promise((resolve) => setTimeout(resolve, url.endsWith('page=2') ? 20 : 1));
+    if (listing) pending--;
+    return recorded(url, init);
+  };
+  const seen: Progress[] = [];
+  const result = await scanOwner('https://github.com/jane', { fetch, progress: (progress) => seen.push(progress) });
+  assert.equal(most, 2, 'pages 2 and 3 at once');
+  assert.equal(result.skipped.forks, 250);
+  assert.deepEqual(seen.filter((progress) => progress.stage === 'listing'), [
+    { stage: 'listing', page: 1 },
+    { stage: 'listing', page: 2 },
+    { stage: 'listing', page: 3 },
+  ]);
 });
 
 test('a local directory and a single repository are not affected', async () => {
