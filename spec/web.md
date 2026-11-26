@@ -6,7 +6,7 @@ A scan asked for by another site (`Sec-Fetch-Site` neither `same-origin` nor `no
 `GITHUB_TOKEN` and local directories work as they do in the CLI. *Nothing is stored*; every scan reads the repository again.
 ## Page
 - One field, **Repository**: a GitHub URL (`…/tree/<ref>` too), an owner URL (`https://github.com/<owner>`) or a directory; `?input=<it>` in the address, so a scan can be shared and reloaded
-- The repository, the skill count, the *scanned commit* (or "local directory") and how long it took
+- The repository, the skill count, the *scanned commit* (or "local directory") and how long it took ("the alpaca was back in …")
 - A table, in the CLI's order: **name**, the description's *first sentence* (the full one on request), the **file**
   linked to the scanned commit, and its *copies*. Local files: the path, not a link (browsers do not open `file://` from a page)
 - A filter, by the [CLI's rules](cli.md#filter): words, *every* word in the name, the *full* description or a path (copies' too)
@@ -16,8 +16,14 @@ A scan asked for by another site (`Sec-Fetch-Site` neither `same-origin` nor `no
 - An **owner**: the CLI's summary (skills, repositories with skills of those scanned, the skipped ones) and how long it took,
   then one table per repository with skills, in the CLI's order, each headed by the repository, its skill count and commit.
   The filter works across all of them; a repository with no match is hidden, and "Showing N of M skills" counts them all
+## Look
+Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), serif headings, a woven band above and below the page.
+- *The alpaca* (top hat, monocle, bow tie) is the crest by the name, the idle state's picture, and stands by an error and by "No skills"
+- A second one *trots along an owner's progress bar*: back and forth while listing, at d of n while scanning, standing still during a wait
+- Both are drawn once in the page (`<symbol id="alpaca">`, `<symbol id="alpaca-trot">`) and coloured by `style.css`: no inline styles, no images to fetch
+- The copy speaks of the alpaca (it is sent out, grazes, comes back); the texts quoted below stay as they are. No motion under `prefers-reduced-motion`
 ## States
-- **Idle**: what is scanned, and one example
+- **Idle**: the alpaca, what is scanned, and one example
 - **Empty field** → "Enter a GitHub URL or a directory path.", no request
 - **Loading**: skeleton rows in the table's layout. An **owner**'s scan takes minutes, so above them a *progress bar* and what it does:
   `Listing the repositories… (page <n>)` (the bar moving, no end known), `Scanned <d> of <n> repositories` (the bar at d of n),

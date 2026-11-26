@@ -64,6 +64,11 @@ test('the page, its script and its styles', async () => {
   const page = await (await get('/')).text();
   assert.match(page, /<label for="input">Repository<\/label>/);
   assert.match(page, /Scan repository/);
+  // The alpaca look: both alpacas drawn in the page, coloured by the stylesheet (the CSP allows no inline styles).
+  assert.match(page, /<symbol id="alpaca" /);
+  assert.match(page, /<symbol id="alpaca-trot" /);
+  assert.doesNotMatch(page, / style="/);
+  assert.match(await (await get('/style.css')).text(), /\.a-wool \{/);
 });
 
 test('a GitHub repository: the same skills as the CLI, linked to the scanned commit', async () => {
@@ -411,6 +416,32 @@ test('the rate limit on the page: restart with a token only when the server has 
   assert.match(withToken, /The server has a token already: wait as the message says, then scan again\./);
 });
 
+test('the alpaca stands by an error and by "No skills"', async (t) => {
+  const error = await page(t, '/?input=limited-token', { result: false });
+  assert.ok(error.document.querySelector('.error svg.alpaca use[href="#alpaca"]'), 'the alpaca by the error');
+  const empty = await page(t, `/?input=${encodeURIComponent(new URL('../src', import.meta.url).pathname)}`, { result: false });
+  assert.match(empty.document.querySelector('.state .state-title')?.textContent ?? '', /^No skills in /);
+  assert.ok(empty.document.querySelector('.state svg.alpaca use[href="#alpaca"]'), 'the alpaca by "No skills"');
+});
+
+test('no motion under prefers-reduced-motion: what moves is only in the no-preference block', async () => {
+  const css = (await (await get('/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+  const start = css.indexOf('@media (prefers-reduced-motion: no-preference) {');
+  assert.ok(start >= 0, 'the no-preference block');
+  let end = css.indexOf('{', start) + 1;
+  for (let depth = 1; depth > 0; end++) depth += css[end] === '{' ? 1 : css[end] === '}' ? -1 : 0;
+  const motion = css.slice(start, end);
+  const still = css.slice(0, start) + css.slice(end);
+  // Outside the block: no animation, no transition of position or transform, no hover or press that moves anything.
+  assert.doesNotMatch(still, /animation\s*:/);
+  assert.doesNotMatch(still, /transition\s*:[^;}]*\b(left|width|transform)\b/);
+  assert.doesNotMatch(still, /:(hover|active)[^{]*\{[^}]*transform\s*:\s*(?!none)/);
+  // Inside it: the alpaca and the bar slide to d of n, the crest tilts on hover.
+  assert.match(motion, /\.trotter \{ transition: left /);
+  assert.match(motion, /::-webkit-progress-value \{ transition: width /);
+  assert.match(motion, /\.crest:hover \.alpaca \{ transform: /);
+});
+
 /** `/api/scan` as the page asks for it: a stream of JSON lines. */
 async function lines(input: string) {
   const response = await get(`/api/scan?input=${encodeURIComponent(input)}`, { headers: { Accept: 'application/x-ndjson, application/json' } });
@@ -453,6 +484,11 @@ test('the page while an owner is scanned: the bar, how many of how many, the wai
   assert.match(label() ?? '', /^GitHub asked to slow down: going on in 4[45] s$/);
   assert.equal(bar.value, 3);
   assert.equal(bar.max, 10);
+  // The alpaca on the bar stands still during the wait, where the scan got to.
+  const trail = document.querySelector('.trail') as HTMLElement;
+  assert.ok(trail.querySelector('svg.trotter use[href="#alpaca-trot"]'), 'the trotting alpaca');
+  assert.deepEqual([trail.classList.contains('resting'), trail.classList.contains('roaming')], [true, false]);
+  assert.equal(trail.style.getPropertyValue('--at'), '0.3');
   slow.resolve();
   for (let i = 0; i < 200 && !document.getElementById('filter'); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.ok(document.getElementById('filter'), 'the result');
@@ -464,10 +500,17 @@ test('the page’s progress: listing (the bar moving, no end known), then scanne
   const listing = await page(t, `/?input=${encodeURIComponent('https://github.com/listing')}`, { result: false, until: '.progress:not([hidden])' });
   assert.equal(listing.document.querySelector('.progress-label')?.textContent, 'Listing the repositories… (page 2)');
   assert.equal(listing.document.querySelector('progress')?.hasAttribute('value'), false);
+  // The alpaca trots back and forth: the end is not known yet.
+  const roaming = listing.document.querySelector('.trail') as HTMLElement;
+  assert.deepEqual([roaming.classList.contains('roaming'), roaming.classList.contains('resting')], [true, false]);
 
   const scanning = await page(t, `/?input=${encodeURIComponent('https://github.com/scanning')}`, { result: false, until: '.progress:not([hidden])' });
   assert.equal(scanning.document.querySelector('.progress-label')?.textContent, 'Scanned 3 of 10 repositories');
   const bar = scanning.document.querySelector('progress') as HTMLProgressElement;
   assert.deepEqual([bar.value, bar.max], [3, 10]);
+  // The alpaca at d of n.
+  const trail = scanning.document.querySelector('.trail') as HTMLElement;
+  assert.deepEqual([trail.classList.contains('roaming'), trail.classList.contains('resting')], [false, false]);
+  assert.equal(trail.style.getPropertyValue('--at'), '0.3');
   halted.resolve();
 });

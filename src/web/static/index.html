@@ -5,13 +5,69 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Skill Atlas</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2324345a'/%3E%3Cellipse cx='10' cy='8' rx='2.5' ry='5' fill='%23e3c39a'/%3E%3Cellipse cx='22' cy='8' rx='2.5' ry='5' fill='%23e3c39a'/%3E%3Cpath d='M11 32V22h10v10z' fill='%23e3c39a'/%3E%3Cellipse cx='16' cy='16' rx='9' ry='10' fill='%23e3c39a'/%3E%3Ccircle cx='16' cy='7' r='5' fill='%23e3c39a'/%3E%3Cellipse cx='16' cy='20' rx='5' ry='4' fill='%23fbf1df'/%3E%3Ccircle cx='12' cy='14' r='1.5' fill='%232b2118'/%3E%3Ccircle cx='20' cy='14' r='1.5' fill='%232b2118'/%3E%3Ccircle cx='20' cy='14' r='3.6' fill='none' stroke='%23d9a441' stroke-width='1.2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
+  <!-- The alpacas: drawn once here, shown with <use>. Colours come from style.css (the CSP allows no inline styles). -->
+  <svg class="sprites" aria-hidden="true" width="0" height="0">
+    <!-- The fancy one: top hat, monocle, bow tie. -->
+    <symbol id="alpaca" viewBox="0 0 120 150">
+      <ellipse class="a-wool" cx="36" cy="40" rx="7" ry="16" transform="rotate(-24 36 40)"/>
+      <ellipse class="a-wool" cx="84" cy="40" rx="7" ry="16" transform="rotate(24 84 40)"/>
+      <ellipse class="a-ear" cx="36" cy="41" rx="3.2" ry="10" transform="rotate(-24 36 41)"/>
+      <ellipse class="a-ear" cx="84" cy="41" rx="3.2" ry="10" transform="rotate(24 84 41)"/>
+      <path class="a-wool" d="M41 150V92q0-12 19-12t19 12v58z"/>
+      <path class="a-shade" d="M41 112q5 5 9.500 0t9.500 0 9.500 0 9.500 0v6q-5 5-9.500 0t-9.500 0-9.500 0-9.500 0zM41 132q5 5 9.500 0t9.500 0 9.500 0 9.500 0v6q-5 5-9.500 0t-9.500 0-9.500 0-9.500 0z"/>
+      <ellipse class="a-wool" cx="60" cy="66" rx="27" ry="30"/>
+      <circle class="a-wool" cx="45" cy="40" r="11"/>
+      <circle class="a-wool" cx="75" cy="40" r="11"/>
+      <circle class="a-wool" cx="60" cy="33" r="13"/>
+      <circle class="a-wool" cx="52" cy="45" r="10"/>
+      <circle class="a-wool" cx="68" cy="45" r="10"/>
+      <ellipse class="a-face" cx="60" cy="80" rx="15" ry="12"/>
+      <path class="a-line" d="M55 75q5 4 10 0M60 77v6M53 84q7 5 14 0"/>
+      <circle class="a-ink" cx="47" cy="62" r="3.600"/>
+      <circle class="a-ink" cx="73" cy="62" r="3.600"/>
+      <circle class="a-glint" cx="48.200" cy="60.800" r="1.100"/>
+      <circle class="a-glint" cx="74.200" cy="60.800" r="1.100"/>
+      <path class="a-line" d="M42 55q5-3 10-1"/>
+      <path class="a-line" d="M68 51q5-3 11 0"/>
+      <circle class="a-gold-line" cx="73" cy="62" r="9"/>
+      <path class="a-chain" d="M82 64q11 20-6 40"/>
+      <rect class="a-hat" x="46" y="2" width="28" height="22" rx="2.500"/>
+      <rect class="a-gold" x="46" y="15" width="28" height="5"/>
+      <rect class="a-hat" x="37" y="21" width="46" height="6" rx="3"/>
+      <path class="a-bow" d="M60 104l-17-10v20zM60 104l17-10v20z"/>
+      <circle class="a-gold" cx="60" cy="104" r="4.500"/>
+    </symbol>
+    <!-- The one on the progress bar, trotting. -->
+    <symbol id="alpaca-trot" viewBox="0 0 64 56">
+      <circle class="a-wool" cx="10" cy="29" r="4.500"/>
+      <rect class="a-shade" x="20" y="38" width="4.500" height="16" rx="2.200"/>
+      <rect class="a-shade" x="39" y="38" width="4.500" height="16" rx="2.200"/>
+      <rect class="a-wool" x="14" y="38" width="4.500" height="16" rx="2.200"/>
+      <rect class="a-wool" x="34" y="38" width="4.500" height="16" rx="2.200"/>
+      <ellipse class="a-wool" cx="28" cy="33" rx="19" ry="11.500"/>
+      <rect class="a-wool" x="40" y="9" width="10" height="28" rx="5"/>
+      <ellipse class="a-wool" cx="45" cy="5" rx="2.200" ry="5"/>
+      <ellipse class="a-wool" cx="50" cy="12" rx="9" ry="6.500"/>
+      <circle class="a-wool" cx="46" cy="7" r="4.500"/>
+      <ellipse class="a-face" cx="56" cy="13.500" rx="4" ry="3.500"/>
+      <circle class="a-ink" cx="51.500" cy="10.500" r="1.200"/>
+      <path class="a-bow" d="M45 24l-5-3.500v7zM45 24l5-3.500v7z"/>
+    </symbol>
+  </svg>
+
+  <div class="textile" aria-hidden="true"></div>
+
   <header class="masthead">
-    <p class="wordmark"><a href="/">Skill Atlas</a></p>
-    <p class="tagline">Every agent skill in a repository: name, description and a link to its <code>SKILL.md</code>.</p>
+    <a class="crest" href="/" aria-hidden="true" tabindex="-1"><svg class="alpaca"><use href="#alpaca"/></svg></a>
+    <div>
+      <p class="wordmark"><a href="/">Skill Atlas</a></p>
+      <p class="tagline">A most distinguished alpaca fetches every agent skill in a repository: name, description and a link to its <code>SKILL.md</code>.</p>
+    </div>
   </header>
 
   <main>
@@ -23,16 +79,23 @@
         <button id="scan-button" type="submit" class="primary">Scan repository</button>
       </div>
       <p id="input-error" class="field-error" hidden></p>
-      <p id="input-hint" class="hint">A GitHub URL (add <code>/tree/&lt;branch or commit&gt;</code> for another ref), an organization or user (<code>https://github.com/&lt;owner&gt;</code>: every repository) or a directory on this machine.</p>
+      <p id="input-hint" class="hint">Tell the alpaca where to graze: a GitHub URL (add <code>/tree/&lt;branch or commit&gt;</code> for another ref), an organization or user (<code>https://github.com/&lt;owner&gt;</code>: the whole herd of repositories) or a directory on this machine.</p>
     </form>
 
     <section id="result" aria-live="polite" aria-busy="false">
-      <div class="state" data-state="idle">
-        <h1 class="state-title">Nothing scanned yet</h1>
-        <p>Skill Atlas lists each <code>&lt;root&gt;/&lt;name&gt;/SKILL.md</code> under <code>.agents/skills</code>, <code>.claude/skills</code> and <code>.github/skills</code>, linked to the file at the scanned commit. Nothing is stored; every scan reads the repository again.</p>
-        <p><a id="example" href="/?input=https://github.com/JetBrains/MPS">Scan JetBrains/MPS as an example</a></p>
+      <div class="state idle" data-state="idle">
+        <svg class="alpaca hero"><use href="#alpaca"/></svg>
+        <h1 class="state-title">The alpaca awaits, impeccably dressed</h1>
+        <p class="ornament" aria-hidden="true">✦ ✦ ✦</p>
+        <p>Nothing scanned yet. Skill Atlas lists each <code>&lt;root&gt;/&lt;name&gt;/SKILL.md</code> under <code>.agents/skills</code>, <code>.claude/skills</code> and <code>.github/skills</code>, linked to the file at the scanned commit. Nothing is stored; every scan sends the alpaca out to read the repository again.</p>
+        <p><a id="example" class="invitation" href="/?input=https://github.com/JetBrains/MPS">Send the alpaca to JetBrains/MPS, as an example</a></p>
       </div>
     </section>
   </main>
+
+  <footer class="colophon">
+    <p>Hand-combed from the finest alpaca fleece. No llamas were consulted.</p>
+  </footer>
+  <div class="textile" aria-hidden="true"></div>
 </body>
 </html>
