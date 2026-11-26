@@ -6,10 +6,14 @@ import { request } from 'node:http';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { after, test } from 'node:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, test, type TestContext } from 'node:test';
+import { JSDOM, type DOMWindow } from 'jsdom';
 import { AtlasError } from '../src/core/errors.ts';
 import { createWebServer, listen, type ScanResponse } from '../src/web/server.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open } from './helpers.ts';
+import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
 
 const logged: string[] = [];
 const server = createWebServer({
@@ -196,4 +200,100 @@ test('serve with a bad port → usage, exit code 1', async () => {
   // The test context, like the browser terminal, has no server to start.
   const noServer = await atlas(['serve']);
   assert.equal(noServer.stderr, 'serve runs only from the command line: ./skill-atlas serve');
+});
+
+// The page itself, in spec/web.md ("Page"): the real app.js, run in jsdom against this server.
+
+/** Opens the page at `path` and waits for the scan to show; returns its window. */
+async function page(t: TestContext, path: string) {
+  const html = await (await get('/')).text();
+  const { window } = new JSDOM(html, { url: `${address}${path}` });
+  const names = ['window', 'document', 'location', 'history', 'Node', 'Event'] as const;
+  const saved = Object.fromEntries([...names, 'fetch'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  for (const name of names) Object.defineProperty(globalThis, name, { value: name === 'window' ? window : window[name], configurable: true, writable: true });
+  const nodeFetch = fetch;
+  Object.defineProperty(globalThis, 'fetch', { value: (url: string, init?: RequestInit) => nodeFetch(new URL(url, window.location.href), init), configurable: true, writable: true });
+  t.after(() => {
+    for (const [name, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete (globalThis as Record<string, unknown>)[name];
+    }
+    window.close();
+  });
+  // The scripts as served, side by side as the browser resolves them: app.js imports ./filter.js.
+  const scripts = mkdtempSync(join(tmpdir(), 'skill-atlas-page-'));
+  t.after(() => rmSync(scripts, { recursive: true, force: true }));
+  for (const file of ['app.js', 'filter.js']) writeFileSync(join(scripts, file), await (await get(`/${file}`)).text());
+  await import(pathToFileURL(join(scripts, 'app.js')).href);
+  const document = window.document;
+  for (let i = 0; i < 200 && !document.getElementById('filter') && !document.querySelector('.state, .error'); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(document.getElementById('filter'), document.getElementById('result')?.textContent ?? '');
+  return window;
+}
+
+/** The names of the rows shown, the count and the no-match message. */
+function shown(window: DOMWindow) {
+  const rows = [...window.document.querySelectorAll('table.skills tbody tr')] as HTMLElement[];
+  return {
+    names: rows.filter((row) => !row.hidden && !row.classList.contains('no-match')).map((row) => row.querySelector('.name')?.textContent),
+    count: window.document.querySelector('.filter .meta')?.textContent,
+    noMatch: rows.find((row) => row.classList.contains('no-match') && !row.hidden)?.textContent ?? '',
+  };
+}
+
+function type(window: DOMWindow, words: string) {
+  const filter = window.document.getElementById('filter') as HTMLInputElement;
+  filter.value = words;
+  filter.dispatchEvent(new window.Event('input'));
+}
+
+test('the web filter: the CLI’s rules — every word, any field, case, copies’ paths, the full description', async (t) => {
+  const { root } = repository(t);
+  const window = await page(t, `/?input=${encodeURIComponent(root)}`);
+  assert.deepEqual(shown(window).names, ['build-tools-bump-gradle-api', 'commits', 'mps-tests']);
+  const cases: [string, string[]][] = [
+    ['gradle bump', ['build-tools-bump-gradle-api']],
+    ['bump kotlin claude', ['build-tools-bump-gradle-api']],
+    ['GRADLE Bum', ['build-tools-bump-gradle-api']],
+    ['.github', ['mps-tests']],
+    ['release', ['build-tools-bump-gradle-api']],
+    ['use', ['build-tools-bump-gradle-api', 'commits']],
+    ['gradle commits', []],
+  ];
+  for (const [words, names] of cases) {
+    type(window, words);
+    assert.deepEqual(shown(window).names, names, words);
+    const cli = await atlas(['scan', root, '--filter', words]);
+    const printed = cli.stdout.split('\n').filter((line) => /^\S/.test(line)).slice(1).map((line) => line.split(' — ')[0]);
+    assert.deepEqual(printed, names, `the CLI, ${words}`);
+  }
+  type(window, 'gradle bump');
+  assert.equal(shown(window).count, 'Showing 1 of 3 skills');
+  type(window, 'gradle commits');
+  assert.deepEqual(shown(window), { names: [], count: 'Showing 0 of 3 skills', noMatch: 'No skills match “gradle commits”. Clear the filter' });
+});
+
+test('the web filter goes in the address, ?filter=; clearing it removes filter', async (t) => {
+  const { root } = repository(t);
+  const window = await page(t, `/?input=${encodeURIComponent(root)}`);
+  const entries = window.history.length;
+  type(window, 'gradle bump');
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}&filter=gradle%20bump`);
+  type(window, '  ');
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}`);
+  assert.equal(window.history.length, entries, 'typing adds no history entry');
+});
+
+test('?filter= in the address: a filtered scan, shared and reloaded', async (t) => {
+  const { root } = repository(t);
+  const window = await page(t, `/?input=${encodeURIComponent(root)}&filter=${encodeURIComponent('Gradle release')}`);
+  assert.equal((window.document.getElementById('filter') as HTMLInputElement).value, 'Gradle release');
+  assert.deepEqual(shown(window), { names: ['build-tools-bump-gradle-api'], count: 'Showing 1 of 3 skills', noMatch: '' });
+});
+
+test('/filter.js: the CLI’s filter module, served to the page', async () => {
+  const response = await get('/filter.js');
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') ?? '', /^text\/javascript/);
+  assert.equal(await response.text(), readFileSync(new URL('../src/core/filter.js', import.meta.url), 'utf8'));
 });

@@ -1,6 +1,7 @@
 // The web view's client: reads ?input=, asks /api/scan and renders one of the states —
 // idle, loading, error, result (with no skills, with warnings, filtered). All text goes in
 // through textContent; nothing from a repository becomes markup.
+import { filterWords, matchesFilter } from './filter.js';
 
 const form = document.getElementById('scan-form');
 const input = document.getElementById('input');
@@ -51,7 +52,7 @@ form.addEventListener('submit', (event) => {
     input.focus();
     return;
   }
-  const url = `/?input=${encodeURIComponent(value)}`;
+  const url = addressFor(value);
   if (location.pathname + location.search !== url) history.pushState(null, '', url);
   scanInput(value);
 });
@@ -67,6 +68,12 @@ result.addEventListener('click', (event) => {
   fromLocation();
 });
 window.addEventListener('popstate', fromLocation);
+
+/** The page's address for a scan: `/?input=<it>`, and `&filter=<words>` unless the filter is blank. */
+function addressFor(value, words = '') {
+  const filter = filterWords(words).join(' ');
+  return `/?input=${encodeURIComponent(value)}${filter ? `&filter=${encodeURIComponent(filter)}` : ''}`;
+}
 
 function fromLocation() {
   const value = new URLSearchParams(location.search).get('input')?.trim() ?? '';
@@ -191,27 +198,37 @@ function showResult({ repository, skills, warnings }, elapsed) {
     );
   }
 
-  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb), text: `${skill.name}\n${skill.description}\n${skill.path}`.toLowerCase() }));
+  const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
   const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
+  const applyFilter = () => {
+    const words = filterWords(filter.value);
+    let shown = 0;
+    for (const { skill, row } of rows) {
+      const match = matchesFilter(skill, words);
+      row.hidden = !match;
+      if (match) shown++;
+    }
+    noMatch.hidden = shown > 0;
+    noMatch.firstChild.replaceChildren(
+      `No skills match “${words.join(' ')}”. `,
+      h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
+    );
+    count.textContent = words.length > 0 ? `Showing ${shown.toLocaleString('en')} of ${plural(skills.length, 'skill', 'skills')}` : '';
+  };
   const filter = h('input', {
     id: 'filter', type: 'search', autocomplete: 'off',
     oninput: () => {
-      const query = filter.value.trim().toLowerCase();
-      let shown = 0;
-      for (const { row, text } of rows) {
-        const match = !query || text.includes(query);
-        row.hidden = !match;
-        if (match) shown++;
-      }
-      noMatch.hidden = shown > 0;
-      noMatch.firstChild.replaceChildren(
-        `No skills match “${filter.value.trim()}”. `,
-        h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
-      );
-      count.textContent = query ? `Showing ${shown.toLocaleString('en')} of ${plural(skills.length, 'skill', 'skills')}` : '';
+      applyFilter();
+      // In the address, so a filtered scan can be shared and reloaded; no history entry per key.
+      const params = new URLSearchParams(location.search);
+      const url = addressFor(params.get('input') ?? '', filter.value);
+      if (location.pathname + location.search !== url) history.replaceState(null, '', url);
     },
   });
+  // ?filter= from the address: a shared or reloaded filtered scan.
+  filter.value = new URLSearchParams(location.search).get('filter') ?? '';
+  applyFilter();
 
   show(
     h('div', { class: 'summary' },
