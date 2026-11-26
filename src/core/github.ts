@@ -7,7 +7,7 @@ export type Fetch = (url: string, init?: { headers?: Record<string, string> }) =
 
 export type GitHubOptions = {
   fetch: Fetch;
-  /** With a token, skills are found through code search; without it, through the tree. */
+  /** A higher rate limit, and private repositories. */
   token?: string;
 };
 
@@ -40,9 +40,7 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
     `Not found in https://github.com/${id}: ${ref}`,
   );
   const warnings: string[] = [];
-  // Code search sees only the default branch, so a pinned ref is always listed through the tree.
-  const searchable = options.token && !name.ref;
-  const paths = searchable ? await searchPaths(github, id) : await treePaths(github, id, sha, warnings, !name.ref);
+  const paths = await rootPaths(github, id, sha, warnings);
   const [organization, repo] = id.split('/');
   return {
     repository: { id, organization, name: repo, url: `https://github.com/${id}`, commit: sha },
@@ -52,36 +50,24 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
   };
 }
 
-/** Code search looks at the whole default branch, 100 results a page. */
-async function searchPaths(github: Client, id: string): Promise<string[]> {
-  const paths = new Set<string>(); // pages can repeat a result
-  // GitHub returns at most 1000 results: ten pages.
-  for (let page = 1; page <= 10; page++) {
-    const result = await github.json<{ total_count: number; items: { path: string }[] }>(
-      `${API}/search/code?q=filename:SKILL.md+repo:${id}&per_page=100&page=${page}`,
-    );
-    for (const item of result.items) paths.add(item.path);
-    if (result.items.length < 100 || page * 100 >= result.total_count) break;
-  }
-  return [...paths];
-}
-
 type Tree = { truncated: boolean; tree: { path: string; mode: string; type: string; sha: string }[] };
 
-/** The whole tree at once, or only the skill roots when it is too large for one answer. */
-async function treePaths(github: Client, id: string, sha: string, warnings: string[], searchable: boolean): Promise<string[]> {
-  const tree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${sha}?recursive=1`);
-  if (!tree.truncated) return files(tree);
-  const hint = searchable ? ' (GITHUB_TOKEN searches everywhere)' : '';
-  warnings.push(`the tree is too large to list at once; looked only in ${SKILL_ROOTS.join(', ')}${hint}`);
-  const paths: string[] = [];
-  for (const root of SKILL_ROOTS) {
-    const rootSha = await directory(github, id, sha, root);
-    if (!rootSha) continue;
-    const subtree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${rootSha}?recursive=1`);
-    paths.push(...files(subtree).map((path) => `${root}/${path}`));
-  }
-  return paths;
+/**
+ * Only the skill roots count, so only they are listed: a few requests, whatever the repository's
+ * size, at any commit. Code search would miss repositories it has not indexed, such as large
+ * monorepos, and answer "nothing" without an error; the whole tree is cut off for large ones.
+ */
+async function rootPaths(github: Client, id: string, sha: string, warnings: string[]): Promise<string[]> {
+  const listed = await Promise.all(
+    SKILL_ROOTS.map(async (root) => {
+      const rootSha = await directory(github, id, sha, root);
+      if (!rootSha) return [];
+      const subtree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${rootSha}?recursive=1`);
+      if (subtree.truncated) warnings.push(`${root} has too many files to list at once; some of its skills may be missing`);
+      return files(subtree).map((path) => `${root}/${path}`);
+    }),
+  );
+  return listed.flat();
 }
 
 /** Walks down one level at a time; the directory's tree, or undefined if it does not exist. */
@@ -138,7 +124,8 @@ function client({ fetch, token }: GitHubOptions) {
     },
     /** A file's bytes at the scanned commit, or undefined if it is not there. */
     async raw(url: string): Promise<Uint8Array | undefined> {
-      const response = await get(url);
+      // A private repository's files need the token too.
+      const response = await get(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
       if (response.status === 404) return undefined;
       if (!response.ok) throw new AtlasError(`GitHub answered ${response.status} for ${url}`);
       return new Uint8Array(await response.arrayBuffer());

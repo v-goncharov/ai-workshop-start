@@ -15,9 +15,24 @@ export const EXAMPLE_COMMIT = '5ab6270ab772d113e8ad52ebfcaa0109c522ae00';
 const EXAMPLE: Recording = {
   'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
   'https://api.github.com/repos/JetBrains/example/commits/main': { status: 200, body: { sha: EXAMPLE_COMMIT } },
-  'https://api.github.com/search/code?q=filename:SKILL.md+repo:JetBrains/example&per_page=100&page=1': {
+  // Only the skill roots are listed: the top of the tree, then down to each root that is there.
+  [`https://api.github.com/repos/JetBrains/example/git/trees/${EXAMPLE_COMMIT}`]: {
     status: 200,
-    body: { total_count: 1, items: [{ path: '.claude/skills/commits/SKILL.md' }] },
+    body: { truncated: false, tree: [{ path: '.claude', mode: '040000', type: 'tree', sha: 'claude' }, { path: 'README.md', mode: '100644', type: 'blob', sha: 'readme' }] },
+  },
+  'https://api.github.com/repos/JetBrains/example/git/trees/claude': {
+    status: 200,
+    body: { truncated: false, tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'claude-skills' }] },
+  },
+  'https://api.github.com/repos/JetBrains/example/git/trees/claude-skills?recursive=1': {
+    status: 200,
+    body: {
+      truncated: false,
+      tree: [
+        { path: 'commits', mode: '040000', type: 'tree', sha: 'commits' },
+        { path: 'commits/SKILL.md', mode: '100644', type: 'blob', sha: 'skill' },
+      ],
+    },
   },
   [`https://raw.githubusercontent.com/JetBrains/example/${EXAMPLE_COMMIT}/.claude/skills/commits/SKILL.md`]: {
     status: 200,
@@ -27,13 +42,16 @@ const EXAMPLE: Recording = {
 
 const github = replay(EXAMPLE);
 
+/** Opens a GitHub URL or a directory as the CLI does, with GitHub answering from EXAMPLE. */
+export const open = (input: string) =>
+  parseGitHubUrl(input) ? openGitHub(input, { fetch: github, token: 'test' }) : openDirectory(input);
+
 /** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE. */
 export async function atlas(args: string[]) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const code = await run(args, {
-    // With a token, through code search, as EXAMPLE answers it.
-    open: (input) => (parseGitHubUrl(input) ? openGitHub(input, { fetch: github, token: 'test' }) : openDirectory(input)),
+    open,
     print: (text) => stdout.push(text),
     error: (text) => stderr.push(text),
   });

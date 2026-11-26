@@ -8,6 +8,9 @@ Core: fetch → find → parse. CLI: a *thin client*.
 Skill: id = `repo:path`, name, description, commit
 ## Details
 - **GitHub API**, no clone; *under 5 s* for intellij-community
+- Only the skill roots are listed, whatever the repository's size: no code search
+  (it misses repositories it has not indexed, such as large monorepos, *without an error*),
+  no whole tree (cut off for large ones). A root too large to list → a *warning*
 - The name: front matter, else the directory
 - The link pins the *scanned commit*
 - Malformed front matter → a *warning*, the scan goes on

@@ -9,14 +9,11 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { CLI } from '../helpers.ts';
 
-/** What the CLI warns about a tree too large for one answer, when the commit is pinned. */
-const LARGE_TREE = 'warning: the tree is too large to list at once; looked only in .agents/skills, .claude/skills, .github/skills\n';
-
 const REPOSITORIES = [
   {
     repo: 'JetBrains/MPS',
     commit: '1cbf7f783dbc5c74c8e5231d31f61b02829143de',
-    stderr: LARGE_TREE,
+    stderr: '',
     // Part of the product: shipped to users, outside the skill roots.
     skipped: 'plugins/mcp-tools/resources/jetbrains/mps/agents/mcp/skills/mps-aspect-generator/SKILL.md',
   },
@@ -24,7 +21,7 @@ const REPOSITORIES = [
     // The commit that added agent/skills; a later one removed it.
     repo: 'JetBrains/android',
     commit: '4d9ec3e52b338aa1c962c1ff0421cc62db5c73af',
-    stderr: LARGE_TREE,
+    stderr: '',
     // An unusual folder: the repository's own workflow, outside the skill roots.
     skipped: 'agent/skills/writing-lint-checks/SKILL.md',
   },
