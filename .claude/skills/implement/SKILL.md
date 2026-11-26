@@ -5,7 +5,7 @@ description: Implement an issue end to end in Skill Atlas — understand the des
 
 # Implement
 
-Take the issue from understanding to an open pull request, in four phases, in order. Don't start a phase until the previous one is done.
+Take the issue from understanding to an open pull request, in five phases, in order. Don't start a phase until the previous one is done.
 
 ## 1. Understand the design
 - Read the issue with all its comments and linked issues. Issues are disabled on this repository, so the issue may be a URL elsewhere or pasted text; if there is none, ask for it.
@@ -23,11 +23,19 @@ Take the issue from understanding to an open pull request, in four phases, in or
 - Keep the spec, README and `--help` in step with the code. If the implementation changes the design, update the spec first.
 - Done means: `npm run typecheck` and `npm test` pass, and `npm run test:e2e` too if you touched scanning or GitHub access. Run them; don't assume. Try the change once the way a user would: `./skill-atlas scan ./fixture`, or `./skill-atlas serve` for the web view.
 
-## 4. Pull request
-- Branch from an up-to-date `main` (the remote is `fork`) with a short descriptive name. Commit the spec, tests and code together with a message that says what changed and why.
-- Push and open the PR with `gh pr create`. Use the style of the earlier PRs:
+## 4. Demo
+- **Every PR with a UI change MUST have a video demo.** A UI change is anything a user sees: the web view, or the CLI's output, messages and `--help`. With the [demo skill](../demo/SKILL.md), add `demo/scenarios/<feature>.ts` and record it with `npm run demo -- <feature>`. Show the feature as the spec describes it, and check the frames before you go on.
+- When a change shows up differently in a scenario that already exists (a caption, a count, a screen), update that scenario and record it again too.
+- No UI change (internals, GitHub access, speed, tests only) → no demo. Say so in the PR with the reason. When unsure, record one.
+- A demo you can't record (no browser, no `ffmpeg`) blocks the PR. Tell the user and don't open the PR without it.
+
+## 5. Pull request
+- Branch from an up-to-date `main` (the remote is `fork`) with a short descriptive name. Commit the spec, tests, code and demo scenario together with a message that says what changed and why.
+- Push the branch. With a demo, publish it: `demo/publish.sh <branch> demo/out/<feature>.gif demo/out/<feature>.mp4`. This prints the `## Demo` section.
+- Open the PR with `gh pr create`. Use the style of the earlier PRs:
   - `## What`: the user-visible change, a few bullets.
   - `## Spec changes`: what changed in `spec/` and why, including any corrections.
+  - `## Demo`: as `demo/publish.sh` printed it, the GIF inline and the MP4 linked. Without a UI change: `No demo: <why there is nothing to show>`.
   - `## Testing`: the commands you ran and their real results (for example "`npm test` (17 pass)").
   - Link the issue.
 - Give the user the PR URL. If a check fails or a step was skipped, say so; don't report it as done.

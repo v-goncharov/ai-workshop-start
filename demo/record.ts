@@ -1,4 +1,4 @@
-// Records a feature demo as a video: `npm run demo -- <scenario>` → demo/out/<scenario>.mp4.
+// Records a feature demo as a video: `npm run demo -- <scenario>` → demo/out/<scenario>.mp4 and .gif.
 // It starts `./skill-atlas serve` on a free port, drives the web view in Chrome with Playwright, with captions
 // on top, and converts Playwright's WebM to MP4 with ffmpeg. Scenarios: demo/scenarios/<scenario>.ts.
 import { spawn, execFileSync } from 'node:child_process';
@@ -179,7 +179,12 @@ async function record(scenario: string) {
     await run(demo);
     await pause(800);
     await recording.stop();
+    // A GIF too: a PR description shows a GIF inline, an MP4 only as a link.
+    const gif = mp4.replace(/\.mp4$/, '.gif');
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', mp4, '-vf',
+      'fps=8,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none', gif]);
     console.log(mp4);
+    console.log(gif);
   } finally {
     await browser.close();
     stop();
