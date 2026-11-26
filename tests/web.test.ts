@@ -64,6 +64,11 @@ test('the page, its script and its styles', async () => {
   const page = await (await get('/')).text();
   assert.match(page, /<label for="input">Repository<\/label>/);
   assert.match(page, /Scan repository/);
+  // The alpaca look: both alpacas drawn in the page, coloured by the stylesheet (the CSP allows no inline styles).
+  assert.match(page, /<symbol id="alpaca" /);
+  assert.match(page, /<symbol id="alpaca-trot" /);
+  assert.doesNotMatch(page, / style="/);
+  assert.match(await (await get('/style.css')).text(), /\.a-wool \{/);
 });
 
 test('a GitHub repository: the same skills as the CLI, linked to the scanned commit', async () => {

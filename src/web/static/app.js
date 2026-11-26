@@ -27,6 +27,17 @@ function h(tag, attributes = {}, ...children) {
   return element;
 }
 
+/** One of the page's alpacas (the <symbol>s in index.html), as an <svg> to place. */
+function alpaca(className = 'alpaca', symbol = 'alpaca') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', className);
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${symbol}`);
+  svg.append(use);
+  return svg;
+}
+
 function show(...nodes) {
   result.replaceChildren(...nodes.filter(Boolean));
 }
@@ -34,7 +45,7 @@ function show(...nodes) {
 function setBusy(busy) {
   result.setAttribute('aria-busy', String(busy));
   button.disabled = busy;
-  button.textContent = busy ? 'Scanning…' : 'Scan repository';
+  button.textContent = busy ? 'The alpaca is out…' : 'Scan repository';
 }
 
 function setFieldError(message) {
@@ -158,15 +169,21 @@ function stopCountdown() {
 function showProgress(progress) {
   const bar = result.querySelector('progress');
   const label = result.querySelector('.progress-label');
-  if (!bar || !label) return;
+  const trail = result.querySelector('.trail');
+  if (!bar || !label || !trail) return;
   result.querySelector('.progress').hidden = false;
   stopCountdown();
+  // The alpaca above the bar: roaming while the end is unknown, at d of n after, standing still during a wait.
+  trail.classList.toggle('roaming', progress.stage === 'listing');
+  trail.classList.toggle('resting', progress.stage === 'waiting');
   if (progress.stage === 'listing') {
     bar.removeAttribute('value');
     label.textContent = progress.page > 1 ? `Listing the repositories… (page ${progress.page})` : 'Listing the repositories…';
   } else if (progress.stage === 'scanning') {
     bar.max = Math.max(progress.total, 1);
     bar.value = progress.done;
+    // Through the CSSOM: the page's CSP allows no style attributes.
+    trail.style.setProperty('--at', String(progress.done / Math.max(progress.total, 1)));
     label.textContent = `Scanned ${progress.done} of ${progress.total} ${progress.total === 1 ? 'repository' : 'repositories'}`;
   } else if (progress.stage === 'waiting') {
     // The bar stays where it is: GitHub asked to slow down, the scan goes on after the wait.
@@ -211,7 +228,7 @@ function showLoading() {
     // Shown once an owner's scan says how far it is.
     h('div', { class: 'progress', hidden: true },
       h('p', { class: 'progress-label', id: 'progress-label' }),
-      h('progress', { 'aria-labelledby': 'progress-label' }),
+      h('div', { class: 'trail' }, alpaca('trotter', 'alpaca-trot'), h('progress', { 'aria-labelledby': 'progress-label' })),
     ),
     table(rows, true),
   );
@@ -221,7 +238,8 @@ function showError(value, message, next) {
   document.title = `Could not scan · Skill Atlas`;
   show(
     h('div', { class: 'error', role: 'alert' },
-      h('h1', { class: 'state-title' }, 'Could not scan this repository'),
+      alpaca(),
+      h('h1', { class: 'state-title' }, 'The alpaca could not scan this repository'),
       h('p', { class: 'message' }, message),
       h('p', {}, next),
       h('p', {}, h('button', { type: 'button', class: 'secondary', onclick: () => scanInput(value) }, 'Scan again')),
@@ -245,7 +263,7 @@ function plural(count, one, many) {
 }
 
 function scannedIn(elapsed) {
-  return ` · scanned in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`;
+  return ` · the alpaca was back in ${elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} s`}`;
 }
 
 /** The scanned commit, linked; or "local directory". */
@@ -265,7 +283,9 @@ function warningList(warnings) {
 
 function noSkills(where) {
   return h('div', { class: 'state' },
+    alpaca(),
     h('h2', { class: 'state-title' }, `No skills in ${where}`),
+    h('p', {}, 'The alpaca looked everywhere it is allowed to graze and came back with an empty saddlebag.'),
     h('p', {}, 'Skill Atlas counts only ', h('code', {}, '<root>/<name>/SKILL.md'), ' under ',
       h('code', {}, '.agents/skills'), ', ', h('code', {}, '.claude/skills'), ' and ', h('code', {}, '.github/skills'),
       '. Skills elsewhere, such as test data or skills shipped inside the product, are skipped.'),
