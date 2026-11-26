@@ -40,7 +40,10 @@ Judge the comment, not the commenter: agreeing to a wrong change is worse than a
 ## 5. Merge
 Merge only when all's good — every one of these holds, checked now, not assumed:
 - This run changed nothing and posted no replies: no new comments were found in phase 1, or there were none to act on. A run that pushed fixes, merged `main` or replied hands the PR back to the reviewer; don't merge on the reviewer's behalf.
-- No review thread is unresolved, and no top-level PR comment or review body is left unanswered.
+- Nothing is left open, judged against the qualifying approval (the next condition). Threads stay unresolved after they are answered — neither this skill nor `cr` resolves them — so "open" is defined by the marker phase 1 uses:
+  - A review thread is handled when it is resolved, or when its last comment carries `<!-- address-cr -->` and the qualifying approval was submitted after that comment.
+  - A review body or top-level PR comment is handled when it is the qualifying approval itself, was posted before it, or carries `<!-- address-cr -->`.
+  - Anything else is open.
 - The latest review is an approval and no later review requests changes: `reviewDecision` is `APPROVED`, or, when the reviewer is the PR author's account (GitHub then records the verdict as a `COMMENTED` review), the latest review's body states approval and no newer review or comment asks for changes.
 - Checks pass: `gh pr checks` reports every required check as passing (none failing or pending). If there are no checks, run `npm run typecheck` and `npm test` on the PR head and require both to pass.
 - GitHub can merge it: `gh pr view --json mergeable,mergeStateStatus,isDraft` shows `MERGEABLE`, a `CLEAN` (or `HAS_HOOKS`) state, and not a draft.
