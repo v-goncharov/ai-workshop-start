@@ -35,10 +35,13 @@ Every repository is scanned on its **default branch**, exactly as a single one i
 the same skill roots, edge cases, duplicates and links pinned to its commit.
 ### Which repositories
 - The owner's repositories from the GitHub API, every page: `/orgs/<owner>/repos`, else `/users/<owner>/repos`
+  (else `/user/repos?affiliation=owner` when the token is the user's own, below)
 - **Skipped**: forks, archived repositories, and empty ones (GitHub has no commit for them).
   The summary gives the counts; *no warning* for each
-- With `GITHUB_TOKEN`: an organization's private repositories the token can see too.
-  GitHub lists only a *user's* public repositories
+- With `GITHUB_TOKEN`: the private repositories the token can see too. An organization's are listed with the rest.
+  `/users/<owner>/repos` has only a user's *public* ones, so for a user the scan asks `/user` whose the token is:
+  the user's own (the login, in any case) → `/user/repos?affiliation=owner`, their private repositories included;
+  another user's, or a token `/user` refuses (a GitHub App's) → `/users/<owner>/repos`, public ones only, with no warning
 ### Failures and limits
 - Unknown owner → `Owner not found: https://github.com/<owner>`, exit code 1
 - `…/tree/<ref>` on an owner → `…/tree/<branch or commit> works only for a repository; an owner's repositories are scanned on their default branches: <input>`, exit code 1

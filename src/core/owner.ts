@@ -79,27 +79,42 @@ export async function scanOwner(input: string, options: OwnerOptions): Promise<O
   };
 }
 
-/** Every page of `/orgs/<owner>/repos`, or of `/users/<owner>/repos` if the owner is not an organization. */
+/**
+ * Every page of `/orgs/<owner>/repos`; if the owner is not an organization, of `/users/<owner>/repos`, which has only
+ * a user's public repositories, or of `/user/repos?affiliation=owner` when the token is that user's own, with their private ones.
+ */
 async function listRepositories(github: Client, owner: string): Promise<Listed[]> {
-  const page = (kind: string, number: number) => github.json<Listed[]>(`${API}/${kind}/${encodeURIComponent(owner)}/repos?per_page=${PAGE}&page=${number}`);
-  let kind = 'orgs';
+  const page = (path: string, number: number) => github.json<Listed[]>(`${API}/${path}per_page=${PAGE}&page=${number}`);
+  let path = `orgs/${encodeURIComponent(owner)}/repos?`;
   let first: Listed[];
   try {
-    first = await page(kind, 1);
+    first = await page(path, 1);
   } catch (error) {
     if (!(error instanceof GitHubError && error.status === 404)) throw error;
-    kind = 'users';
-    first = await page(kind, 1).catch((error: unknown) => {
+    path = (await isTokenOf(github, owner)) ? 'user/repos?affiliation=owner&' : `users/${encodeURIComponent(owner)}/repos?`;
+    first = await page(path, 1).catch((error: unknown) => {
       if (error instanceof GitHubError && error.status === 404) throw new AtlasError(`Owner not found: https://github.com/${owner}`);
       throw error;
     });
   }
   const all = [...first];
   for (let number = 2, last = first; last.length === PAGE; number++) {
-    last = await page(kind, number);
+    last = await page(path, number);
     all.push(...last);
   }
   return all;
+}
+
+/** Whether GITHUB_TOKEN is the user's own (`/user` names them); not for a token `/user` refuses, such as a GitHub App's. */
+async function isTokenOf(github: Client, owner: string): Promise<boolean> {
+  if (!github.token) return false;
+  try {
+    const { login } = await github.json<{ login: string }>(`${API}/user`);
+    return login.toLowerCase() === owner.toLowerCase();
+  } catch (error) {
+    if (error instanceof GitHubError) return false;
+    throw error;
+  }
 }
 
 type OneResult = { kind: 'scanned'; scan: ScanResult } | { kind: 'failed'; warning: string } | { kind: 'empty' };

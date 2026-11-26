@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import type { Fetch } from '../src/core/github.ts';
-import { replay, type Recording } from '../src/core/replay.ts';
+import { replay, type Recorded, type Recording } from '../src/core/replay.ts';
 import { acme, atlas, budget, CLI, listed, recordRepository } from './helpers.ts';
 
 const MPS_TESTS = '---\nname: mps-tests\ndescription: Run the MPS tests.\n---\n';
@@ -97,6 +97,68 @@ test('a user: /orgs/<owner>/repos is not found, so /users/<owner>/repos, every p
       '  https://github.com/jane/dotfiles/blob/d1/.claude/skills/commits/SKILL.md',
     ].join('\n'),
   );
+});
+
+/** jane's public repository, with one skill, as /users/jane/repos lists it. */
+const JANE_PUBLIC: Recording = {
+  ...NOT_AN_ORGANIZATION,
+  'https://api.github.com/users/jane/repos?per_page=100&page=1': { status: 200, body: [listed('jane/dotfiles')] },
+  ...budget(5000),
+  ...recordRepository('jane/dotfiles', { '.claude/skills/commits/SKILL.md': '---\nname: commits\ndescription: Write commits.\n---\n' }, { commit: 'd1' }),
+};
+
+const JANE_DOTFILES = ['jane/dotfiles · 1 skill', 'commits — Write commits.', '  https://github.com/jane/dotfiles/blob/d1/.claude/skills/commits/SKILL.md'];
+
+test('a user with their own token: /user/repos?affiliation=owner, every page, their private repositories too', async () => {
+  const page1 = [listed('jane/dotfiles'), ...Array.from({ length: 99 }, (_, index) => listed(`jane/fork-${index}`, { fork: true }))];
+  const recording: Recording = {
+    ...JANE_PUBLIC,
+    // The login in another case than the URL: still the user's own token.
+    'https://api.github.com/user': { status: 200, body: { login: 'Jane' } },
+    'https://api.github.com/user/repos?affiliation=owner&per_page=100&page=1': { status: 200, body: page1 },
+    'https://api.github.com/user/repos?affiliation=owner&per_page=100&page=2': { status: 200, body: [listed('jane/notes', { priv: true })] },
+    ...recordRepository('jane/notes', { '.agents/skills/journal/SKILL.md': '---\nname: journal\ndescription: Keep the journal.\n---\n' }, { commit: 'n1' }),
+  };
+  const asked: { url: string; authorization?: string }[] = [];
+  const recorded = replay(recording);
+  const fetch: Fetch = (url, init) => (asked.push({ url, authorization: init?.headers?.Authorization }), recorded(url, init));
+  const scanned = await atlas(['scan', 'https://github.com/jane'], { fetch, token: 'janes-token' });
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(
+    scanned.stdout,
+    [
+      'jane · 2 skills in 2 of 2 repositories (99 forks skipped)',
+      ...JANE_DOTFILES,
+      'jane/notes · 1 skill',
+      'journal — Keep the journal.',
+      '  https://github.com/jane/notes/blob/n1/.agents/skills/journal/SKILL.md',
+    ].join('\n'),
+  );
+  assert.deepEqual(asked.filter(({ url }) => url.includes('/users/')), [], 'the public listing is not asked for');
+  for (const { url, authorization } of asked) assert.equal(authorization, 'Bearer janes-token', url);
+});
+
+test('a user with another user’s token, or a token /user refuses → /users/<owner>/repos, public repositories only, no warning', async () => {
+  const answers: [string, Recorded][] = [
+    ['another user', { status: 200, body: { login: 'bob' } }],
+    ['a GitHub App token', { status: 403, body: { message: 'Resource not accessible by integration' } }],
+  ];
+  for (const [token, user] of answers) {
+    // bob's /user/repos would list bob's repositories, not jane's: it must not be asked for.
+    const recording: Recording = { ...JANE_PUBLIC, 'https://api.github.com/user': user };
+    const scanned = await atlas(['scan', 'https://github.com/jane'], { fetch: replay(recording), token: 'test' });
+    assert.equal(scanned.code, 0, `${token}: ${scanned.stderr}`);
+    assert.equal(scanned.stdout, ['jane · 1 skill in 1 of 1 repository', ...JANE_DOTFILES].join('\n'), token);
+    assert.equal(scanned.stderr, '', token);
+  }
+});
+
+test('a user without a token: /user is not asked for', async () => {
+  const asked: string[] = [];
+  const recorded = replay(JANE_PUBLIC);
+  const scanned = await atlas(['scan', 'https://github.com/jane'], { fetch: (url, init) => (asked.push(url), recorded(url, init)) });
+  assert.equal(scanned.stdout, ['jane · 1 skill in 1 of 1 repository', ...JANE_DOTFILES].join('\n'));
+  assert.ok(!asked.some((url) => /api\.github\.com\/user(\/|$)/.test(url)), asked.join('\n'));
 });
 
 test('no skills in any repository → the summary and which folders count, exit code 0', async () => {
