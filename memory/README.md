@@ -1,6 +1,6 @@
 # Memory
 
-Lessons the agents learned working on this repository, written by the agents for the agents. [AGENTS.md](../AGENTS.md) says when to read and write them.
+Lessons the agents learned working on this repository, written by the agents for the agents. Every skill reads them before it starts (see [AGENTS.md](../AGENTS.md)).
 
 ## When to write
 Write a lesson when something went wrong that a future run could have avoided by knowing one thing:
@@ -22,7 +22,7 @@ Nothing went wrong → write nothing. Don't record what the code, `spec/`, `AGEN
   **Why:** <what happened, concretely>
   **Source:** <PR, review comment or CI run URL>
   ```
-- Commit it on the branch you are already on, in its own commit (`memory: <rule>`), so it is reviewed and merged with the change. Never push to `main` directly.
+- Commit it on the branch you are already on, in its own commit (`memory: <rule>`), so it is reviewed and merged with the change. Never push to `main` directly. `cr` and `qa` never commit: pushing would change the PR's head commit under review.
 
 ## Graduating
 `memory/` is for lessons that haven't settled. When a lesson is clearly part of how the repo works, move it to where it belongs (`spec/`, `AGENTS.md`, or the skill it is about) and delete the file, in the same commit. When there are more than 15 lessons, graduate or merge some before adding another.
