@@ -39,7 +39,7 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
     *fast* (under 1 s); when two apply, chance picks one; when none does, no comment
   - **No skills** (`{input}`); **scan error** (`{input}`), as the page shows them
   - **Filter**, once typing stops for 800 ms (not on every key): *a match* (`{text}` in quotes, `{skills}` shown), *no match* (`{text}`),
-    *cleared* (it had words, now none). Words unchanged since the last time, or the filter from the address → nothing
+    *cleared* (it had words, now none). Words unchanged since the last time, or the filter from the address → nothing; nor once the result has gone (back to the idle page)
   - **Clicks**: a skill's file link (`{name}`), opening a *Full description* (`{name}`), a skill's copies, "Also in …" (`{name}`),
     and *the empty page*: a click on nothing that does anything (not a link, button, field, label, summary, the table or a bubble)
 - *The visitor*: when the crest is *out of view* (scrolled past it, or more than half of it) as a comment starts, the same fancy
@@ -51,10 +51,23 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
   - The visitor is `aria-hidden` and takes no focus; clicks go through it, as through the bubble. The comment is announced once, by the bubble
   - It slides up into view and back down; under `prefers-reduced-motion` it appears and goes without moving
   - At phone width it fits, the bubble beside it inside the window
+- *The alpaca sometimes refuses*, and says why, in the comments' bubble (below the crest, or by the visitor), with the wobble: a refusal is *never silent*.
+  About *1 in 10* actions it can refuse; it *never refuses the same action twice in a row*, so asking again always goes through
+  (an action it can't refuse doesn't count). The refusal's phrase skips the comments' 1 in 3 chance and their 10 s gap,
+  and starts the gap as a comment does. Announced through the same `aria-live="polite"` bubble; focus stays where it was,
+  and the field is not marked invalid. Two more categories in `phrases.js`, at least 10 lines each, never the same one twice in a row:
+  - **Scan refused** (`{input}`, said shortly): the form's submit, the example link, *Scan again*. Nothing is requested;
+    the page stays as it was (idle, the result or the error), the field keeps what was typed; no address or history entry
+  - **Filter refused** (`{text}`), once typing stops for 800 ms, on words that changed: the rows, the count and the address
+    go back to the words before the typing (they follow the typing until then); the text stays in the field.
+    The next words that change go through, even the same ones typed again
+  - *Never refused*: a scan from the address (`?input=` on load, reload, back and forward), so a shared link always opens;
+    clearing the filter; the filter from the address; clicks on links; an empty field ("Enter a GitHub URL…" as before)
 - Not in the CLI
 - The copy speaks of the alpaca (it is sent out, grazes, comes back); the texts quoted below stay as they are. No motion under `prefers-reduced-motion`
 ## States
 - **Idle**: the alpaca (it speaks, see [Look](#look)), what is scanned, and one example
+- A scan starts from the form, the example or *Scan again* (the alpaca may [refuse](#look) these), or from the address (never refused)
 - **Empty field** → "Enter a GitHub URL or a directory path.", no request
 - **Loading**: skeleton rows in the table's layout. An **owner**'s scan takes minutes, so above them a *progress bar* and what it does:
   `Listing the repositories… (page <n>)` (the bar moving, no end known), `Scanned <d> of <n> repositories` (the bar at d of n),

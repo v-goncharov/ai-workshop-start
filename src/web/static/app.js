@@ -68,6 +68,7 @@ form.addEventListener('submit', (event) => {
     input.focus();
     return;
   }
+  if (refuses('scan', 'scanRefused', { input: scanned(value) })) return;
   const url = addressFor(value);
   if (location.pathname + location.search !== url) history.pushState(null, '', url);
   scanInput(value);
@@ -80,6 +81,7 @@ result.addEventListener('click', (event) => {
   const link = event.target.closest('a#example');
   if (!link) return;
   event.preventDefault();
+  if (refuses('scan', 'scanRefused', { input: scanned(new URLSearchParams(link.search).get('input') ?? '') })) return;
   history.pushState(null, '', link.getAttribute('href'));
   fromLocation();
 });
@@ -146,6 +148,11 @@ function remark(categories, values = {}) {
   categories = [categories].flat();
   if (!comment || categories.length === 0 || Date.now() - lastRemarkAt < COOLDOWN) return;
   if (Math.random() >= CHANCE) return;
+  say(categories, values);
+}
+
+/** A comment from one of `categories` now, whatever the chance and the gap; it starts the gap. */
+function say(categories, values = {}) {
   const phrase = pick(PHRASES[pick(categories)].filter((line) => line !== lastPhrase));
   lastPhrase = phrase;
   lastRemarkAt = Date.now();
@@ -182,6 +189,21 @@ function place() {
 if (comment) {
   window.addEventListener('scroll', place, { passive: true });
   window.addEventListener('resize', place, { passive: true });
+}
+
+// The alpaca sometimes refuses a scan or a filter, and says why: a roll at or over 0.9 (1 in 10). Never the same action
+// twice in a row, so asking again goes through; a scan from the address, or clearing the filter, never asks.
+const REFUSE_FROM = 0.9;
+const refused = { scan: false, filter: false }; // whether it refused that action the last time
+
+/** Whether the alpaca refuses `action` this time; if so, it says a line from `category`. */
+function refuses(action, category, values) {
+  if (!comment) return false; // a refusal is never silent
+  if (refused[action]) return (refused[action] = false);
+  if (Math.random() < REFUSE_FROM) return false;
+  refused[action] = true;
+  say([category], values);
+  return true;
 }
 
 crest?.addEventListener('animationend', (event) => {
@@ -226,6 +248,7 @@ function fromLocation() {
   else {
     current?.abort();
     setBusy(false);
+    clearTimeout(typing); // the filter is gone: nothing to say about it
     result.innerHTML = idle;
     document.title = 'Skill Atlas';
   }
@@ -376,7 +399,7 @@ function showError(value, message, next) {
       h('h1', { class: 'state-title' }, 'The alpaca could not scan this repository'),
       h('p', { class: 'message' }, message),
       h('p', {}, next),
-      h('p', {}, h('button', { type: 'button', class: 'secondary', onclick: () => scanInput(value) }, 'Scan again')),
+      h('p', {}, h('button', { type: 'button', class: 'secondary', onclick: () => refuses('scan', 'scanRefused', { input: scanned(value) }) || scanInput(value) }, 'Scan again')),
     ),
   );
 }
@@ -438,8 +461,8 @@ function noSkills(where) {
 function rowFilter(rows, total, noMatch, message = noMatch) {
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
   let shown = 0;
-  const applyFilter = () => {
-    const words = filterWords(filter.value);
+  const applyFilter = (text = filter.value) => {
+    const words = filterWords(text);
     shown = 0;
     const sections = new Map();
     for (const { skill, row, section } of rows) {
@@ -460,21 +483,27 @@ function rowFilter(rows, total, noMatch, message = noMatch) {
     id: 'filter', type: 'search', autocomplete: 'off',
     oninput: () => {
       applyFilter();
-      // In the address, so a filtered scan can be shared and reloaded; no history entry per key.
-      const params = new URLSearchParams(location.search);
-      const url = addressFor(params.get('input') ?? '', filter.value);
-      if (location.pathname + location.search !== url) history.replaceState(null, '', url);
-      // The alpaca comments once typing stops, on words that changed.
+      inAddress(filter.value);
+      // The alpaca comments once typing stops, on words that changed; or refuses them, and the rows go back.
       clearTimeout(typing);
       typing = setTimeout(() => {
         const words = filterWords(filter.value).join(' ');
         if (words === considered) return;
+        if (words && refuses('filter', 'filterRefused', { text: words })) {
+          applyFilter(considered);
+          return inAddress(considered);
+        }
         considered = words;
         if (!words) return remark('filterCleared');
         remark(shown > 0 ? 'filterMatch' : 'filterNoMatch', { text: words, skills: plural(shown, 'skill', 'skills') });
       }, 800);
     },
   });
+  // In the address, so a filtered scan can be shared and reloaded; no history entry per key.
+  const inAddress = (text) => {
+    const url = addressFor(new URLSearchParams(location.search).get('input') ?? '', text);
+    if (location.pathname + location.search !== url) history.replaceState(null, '', url);
+  };
   // ?filter= from the address: a shared or reloaded filtered scan.
   filter.value = new URLSearchParams(location.search).get('filter') ?? '';
   let considered = filterWords(filter.value).join(' '); // the words the alpaca last thought about

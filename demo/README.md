@@ -8,6 +8,7 @@ Every PR with a UI change has one; how to make it: the [demo skill](../.claude/s
 | [`filter`](scenarios/filter.ts) | the [filter](../spec/cli.md#filter): one word, every word, a path, the address, no match; then the CLI |
 | [`alpaca-comments`](scenarios/alpaca-comments.ts) | the [crest alpaca comments](../spec/web.md#look): a scan started and finished, the filter (a match, no match, cleared), clicks |
 | [`alpaca-visitor`](scenarios/alpaca-visitor.ts) | the [visitor](../spec/web.md#look): scrolled past the crest, a comment brings the alpaca on screen; it leaves with the comment, or as the crest comes back; reduced motion |
+| [`alpaca-refuses`](scenarios/alpaca-refuses.ts) | the [alpaca sometimes refuses](../spec/web.md#look): a scan and a filter refused, each with a phrase; asking again goes through; a shared link always opens |
 | [`talking-alpaca`](scenarios/talking-alpaca.ts) | the [alpaca speaks](../spec/web.md#look): a joke per click, from 38, from the keyboard too; the bubble goes after 5 s or on a click elsewhere |
 
 - [`record.ts`](record.ts) starts `./skill-atlas serve` on a free port, drives the web view in a browser with
