@@ -28,9 +28,10 @@ function fakeSlack(onReplies: (call: number, ts: string) => Reply, override: Rec
     server.listen(0, () => r({ url: `http://127.0.0.1:${(server.address() as any).port}`, posts, methods, close: () => server.close() })));
 }
 
-function run(api: string, args: string[]) {
+function run(api: string, args: string[], stdin?: string) {
   return new Promise<{ code: number; out: string; err: string }>((r) => {
     const p = spawn('node', [script, ...args], { env: { ...process.env, SLACK_BOT_TOKEN: 'xoxb-test', SLACK_API_URL: api } });
+    if (stdin !== undefined) p.stdin.end(stdin);
     let out = '', err = ''; p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
     p.on('close', (code) => r({ code: code!, out, err }));
   });
@@ -103,4 +104,27 @@ test('a channel ID skips the conversations.list lookup', async () => {
   assert.match(r.out, /answer from <@UHUMAN>: yes/);
   assert.ok(!s.methods.includes('conversations.list'));
   assert.deepEqual(s.posts, [{ channel: 'C1ABCDEFG', text: 'Q' }]);
+});
+
+test('`-` reads the message from stdin, keeping backticks, `$` and newlines as they are', async () => {
+  const message = 'Should the error go in `spec/cli.md`?\nOr in $HOME/`whoami`?';
+  const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent, { ts: '101.0', user: 'UHUMAN', text: 'cli.md' }, { ts: '201.0', user: 'UHUMAN', text: 'yes' }] } }));
+  const r = await run(s.url, ['--poll', '0.1', '-'], message + '\n');
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.posts, [{ channel: 'C1', text: message }]);
+  const f = await run(s.url, ['--thread', '100.0', '--poll', '0.1', '-'], 'And `this`?');
+  assert.equal(f.code, 0, f.err);
+  assert.deepEqual(s.posts[1], { channel: 'C1', text: 'And `this`?', thread_ts: '100.0' });
+  const e = await run(s.url, ['-'], '  \n'); s.close();
+  assert.equal(e.code, 1); assert.equal(e.err, 'ask-slack: nothing to ask: the message on stdin is empty\n');
+});
+
+test('the SKILL.md heredoc form delivers a message with backticks and `$` unchanged', async () => {
+  const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent, { ts: '101.0', user: 'UHUMAN', text: 'ok' }] } }));
+  const p = spawn('bash', ['-c', `node ${JSON.stringify(script)} --poll 0.1 - <<'EOF'\nUse \`spec/\` and $PATH here\nEOF`],
+    { env: { ...process.env, SLACK_BOT_TOKEN: 'xoxb-test', SLACK_API_URL: s.url } });
+  let err = ''; p.stderr.on('data', (d) => (err += d));
+  const code = await new Promise((r) => p.on('close', r)); s.close();
+  assert.equal(code, 0, err);
+  assert.deepEqual(s.posts, [{ channel: 'C1', text: 'Use `spec/` and $PATH here' }]);
 });

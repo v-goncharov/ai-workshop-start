@@ -3,6 +3,12 @@
 //   node .claude/skills/implement/ask-slack.ts "<question>"          post a new question
 //   node .claude/skills/implement/ask-slack.ts --thread <ts> "<text>" follow up in an existing thread
 //   node .claude/skills/implement/ask-slack.ts --thread <ts>          only wait, post nothing
+//   node .claude/skills/implement/ask-slack.ts [--thread <ts>] - <<'EOF'
+//   <message>
+//   EOF                                                                read the message from stdin
+//
+// `-` reads the message from stdin unchanged, so a quoted heredoc keeps backticks and `$` that a
+// double-quoted argument would hand to the shell as command substitution.
 //
 // Options: --channel <name or ID> (default very-secrect-alpaca-channel; an ID like C0123ABCD skips the
 // conversations.list lookup and its channels:read scope), --wait <seconds> (default 3600),
@@ -29,7 +35,8 @@ const seconds = (name: string, fallback: string): number => {
 const waitSeconds = seconds('wait', '3600');
 const pollSeconds = seconds('poll', '60');
 let thread = opt('thread', '');
-const text = args.join(' ').trim();
+const fromStdin = args.length === 1 && args[0] === '-';
+let text = args.join(' ').trim();
 
 function fail(message: string): never {
   console.error(`ask-slack: ${message}`);
@@ -38,6 +45,12 @@ function fail(message: string): never {
 
 const token = process.env.SLACK_BOT_TOKEN;
 if (!token) fail('SLACK_BOT_TOKEN is not set');
+if (fromStdin) {
+  let raw = '';
+  for await (const chunk of process.stdin) raw += chunk;
+  text = raw.trim();
+  if (!text) fail('nothing to ask: the message on stdin is empty');
+}
 if (!text && !thread) fail('nothing to ask: give a question, or --thread <ts> to wait for replies');
 
 const api = process.env.SLACK_API_URL ?? 'https://slack.com/api';
