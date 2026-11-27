@@ -35,5 +35,4 @@ Aim for 10–25 steps. A step whose expected result the spec doesn't say is a sp
 ## 4. Report
 - The step table with a result column; then each failure with repro steps, expected, actual and evidence; then the spec gaps.
 - For a PR: upload the screenshots of failures with `demo/publish.sh <PR branch>-qa /tmp/qa/<file>.png …` and use the URLs it prints (not its `## Demo` heading). Post the report as one PR comment headed `## QA` and ending with `<!-- qa -->`. Never commit screenshots.
-- Don't write to `memory/`: QA never commits. `implement` or `address-cr` write the lesson when they fix a failure.
 - Tell the user the pass / fail / blocked counts and one line per failure. A blocked or skipped step is not a pass; say so.

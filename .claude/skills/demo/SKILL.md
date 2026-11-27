@@ -28,5 +28,4 @@ Turn a feature into a short captioned video that shows the feature working, in f
 ## 4. Publish
 - Commit the scenario, and any change to `demo/repo/`, with the feature. Never commit `demo/out/`.
 - For a PR, run `demo/publish.sh <PR branch> demo/out/<feature>.gif demo/out/<feature>.mp4` after the branch is pushed. It puts the files on the `demos` branch of the remote you push PRs to (`fork` if there is one, else `origin`), which has no history in common with `main`, and prints a `## Demo` section: the GIF inline and a link to the MP4. Paste it into the PR description as printed.
-- Retro: before you finish, follow [memory/README.md](../../../memory/README.md). If a recording failed or a frame check caught a problem, add or update a lesson in `memory/` and commit it on the feature branch. If nothing went wrong, write nothing.
 - Outside a PR, give the user the path of the MP4 and copy it to `$AIR_ARTIFACTS_DIR` when that variable is set.

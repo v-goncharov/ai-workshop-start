@@ -20,7 +20,5 @@ Observations below this bar are investigation, not report — drop them; they co
 Post each finding as an inline comment, three short parts: problem, failure scenario, suggested fix.
 A finding about the change as a whole anchors on its most representative line. Prefix a finding with "Blocking:" when it must be fixed before merge.
 
-Don't write to `memory/` or push anything: a new commit would invalidate your approval. `address-cr` turns the findings it fixes into lessons.
-
 Verdict: Request Changes if any finding is Blocking; otherwise Approve, even with findings posted.
 The review body is exactly one warm, friendly, short sentence stating the outcome only: approval when there are no blocking findings, or request-changes when blocking inline findings must be addressed before merge. Never praise, justify, summarize, or restate inline comments.
