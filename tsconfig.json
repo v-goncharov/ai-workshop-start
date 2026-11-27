@@ -12,5 +12,5 @@
     "allowJs": true,
     "skipLibCheck": true
   },
-  "include": ["src", "scripts", "tests", "demo"]
+  "include": ["src", "scripts", "tests", "demo", ".agents"]
 }
