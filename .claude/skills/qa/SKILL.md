@@ -34,5 +34,14 @@ Aim for 10–25 steps. A step whose expected result the spec doesn't say is a sp
 
 ## 4. Report
 - The step table with a result column; then each failure with repro steps, expected, actual and evidence; then the spec gaps.
-- For a PR: upload the screenshots of failures with `demo/publish.sh <PR branch>-qa /tmp/qa/<file>.png …` and use the URLs it prints (not its `## Demo` heading). Post the report as one PR comment headed `## QA` and ending with `<!-- qa -->`. Never commit screenshots.
+- For a PR: upload the screenshots of failures with `demo/publish.sh <PR branch>-qa /tmp/qa/<file>.png …` and use the URLs it prints (not its `## Demo` heading). Never commit screenshots.
+- Submit the report as one PR review, not a plain comment, so its verdict shows on the PR and blocks the merge when it should:
+  - **Event**: `REQUEST_CHANGES` if any step failed; `APPROVE` if every step passed and none was blocked; else `COMMENT`. GitHub refuses the first two on your own PR (the bot account often opens and QAs it): then resubmit as `COMMENT`.
+  - **Body**: the report, headed `## QA` and ending with `<!-- qa -->`. Its first line under the heading states the verdict in words ("QA passed.", "QA found failures that must be fixed before merge.", "QA passed, with blocked steps."), so a `COMMENT` fallback still reads as approval or request for changes to [address-cr](../address-cr/SKILL.md).
+  - **Inline comments**: for a failure whose cause you traced to a line in the diff, also one comment on that line: what fails, the repro, expected vs. actual. Not for failures you couldn't trace; the body has them all.
+  - Write the body to `/tmp/qa/review.md` and the inline comments to `/tmp/qa/comments.json` (`[{"path", "line", "side": "RIGHT", "body"}]`, `[]` if none) with the Write tool, then submit, passing the text as a file, never as a quoted argument:
+    ```bash
+    EVENT=<event> node -e 'const fs = require("fs"); process.stdout.write(JSON.stringify({event: process.env.EVENT, body: fs.readFileSync("/tmp/qa/review.md", "utf8"), comments: JSON.parse(fs.readFileSync("/tmp/qa/comments.json", "utf8"))}))' \
+      | gh api "repos/{owner}/{repo}/pulls/<PR>/reviews" --input -
+    ```
 - Tell the user the pass / fail / blocked counts and one line per failure. A blocked or skipped step is not a pass; say so.
