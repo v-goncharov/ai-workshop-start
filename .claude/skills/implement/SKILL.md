@@ -13,10 +13,16 @@ Take the issue from understanding to an open pull request, in five phases, in or
 - Write the design down as a change to `spec/`, in the spec's own terse style: the new behavior, each case and edge case, every error and its message. This is the contract for phases 2 and 3.
 - When the issue is ambiguous, contradicts the spec, or has more than one sensible design, ask in Slack, in `#very-secrect-alpaca-channel`, and wait up to an hour for an answer. Don't guess on behavior a user will see.
   - Ask everything in one message: a link to the issue, each question, its options and your recommendation.
-  - Post it and wait with `node .claude/skills/implement/ask-slack.ts "<message>"`. It waits up to 3600 s, longer than a foreground command may run, so run it with Bash `run_in_background: true` and `timeout: 3900000` (65 min). The background default is 30 min, and at that limit the command is killed before the hour is up. Don't poll Slack yourself. It prints `thread: <ts>`, then the replies.
-  - Keep the turn open until the script exits: wait for it with Monitor in an until-loop on its exit, and don't end the turn while it runs. On Air nothing wakes the session after the turn ends, so the answer would never be read.
-  - Exit 0: read the answer and go on. If it leaves something open, follow up in the same thread with `--thread <ts> "<message>"`, run and waited for the same way; each follow-up waits up to another hour.
-  - Exit 2, no answer within the hour: stop. Don't guess and don't open a PR. Report the unanswered questions and the Slack thread to the user. Any other exit (1, or killed by a signal): Slack or the wait failed; report the error and stop the same way.
+  - Post it and wait. Pass the message on stdin with a quoted heredoc, never as a `"<message>"` argument: inside double quotes bash runs the backticks and `$…` of code spans like `spec/cli.md` as commands. Write the output and the exit code to a file:
+    ```bash
+    timeout 3700 node .claude/skills/implement/ask-slack.ts - > /tmp/ask-slack.out 2>&1 <<'EOF'; echo "exit: $?" >> /tmp/ask-slack.out
+    <message>
+    EOF
+    ```
+    The script waits up to 3600 s, longer than a foreground command may run, so run this with Bash `run_in_background: true` and `timeout: 3900000` (65 min). The background default is 30 min, and at that limit the command is killed before the hour is up. The inner `timeout 3700` makes sure the `exit:` line is still written if the script hangs or is killed. Don't poll Slack yourself. The file gets `thread: <ts>`, then the replies, then `exit: <code>`.
+  - Keep the turn open until the `exit:` line appears. Wait with Monitor, `timeout_ms: 1800000` (its maximum; the 5-minute default expires long before the hour), running `until grep -q '^exit:' /tmp/ask-slack.out; do sleep 30; done; cat /tmp/ask-slack.out`. When the monitor expires without output, arm it again, as often as it takes, and don't end the turn in between: on Air nothing wakes the session after the turn ends, so the answer would never be read. If the background command ends and the file has no `exit:` line, treat it as an error (below).
+  - `exit: 0`: read the answer and go on. If it leaves something open, follow up in the same thread with `--thread <ts> -` and the message in the heredoc, run and waited for the same way; each follow-up waits up to another hour.
+  - `exit: 2`, no answer within the hour: stop. Don't guess and don't open a PR. Report the unanswered questions and the Slack thread to the user. Any other exit (1, 124 from `timeout`, 143 and the like from a signal, or no `exit:` line): Slack or the wait failed; report the error and stop the same way.
 
 ## 2. Tests
 - One integration test for every case you added or changed in the spec, named after that case, in the matching `tests/*.test.ts` (`scan`, `edge-cases`, `web`), or a new file if none fits. Follow the existing tests: run the real CLI or server, use `tests/helpers.ts`, and use temporary repositories or replayed GitHub recordings, so `npm test` stays offline.
