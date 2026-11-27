@@ -1,0 +1,1 @@
+{"groups":[{"name":"Build and test","skills":["acme/huge:.claude/skills/build/SKILL.md","acme/MPS:.agents/skills/mps-tests/SKILL.md"]},{"name":"Docs","skills":["acme/api:.github/skills/api-docs/SKILL.md"]}]}

@@ -19,6 +19,11 @@ forks, archived and empty repositories and prints only the repositories with ski
 `--filter "<words>"` keeps only the skills with every word in the name, description or path,
 in any case: `./skill-atlas scan https://github.com/JetBrains/kotlin --filter "gradle bump"`.
 
+`--map` groups the skills by what they are about, so dozens of them read at a glance: it asks Claude
+(`claude -p --model haiku`, so [Claude Code](https://claude.com/claude-code) must be installed and logged in) and prints
+one group after another; if `claude` is missing or fails, a warning, and the usual list. The web view has the same map
+beside the table. See [spec/map.md](spec/map.md).
+
 The same scan in the browser: `./skill-atlas serve` starts the web view at http://127.0.0.1:4400
 (`--port <n>` for another port). Paste a GitHub URL or a local directory; `?input=` keeps it in the
 address, so a scan can be shared and reloaded; the page's filter follows the CLI's rules and goes in

@@ -16,6 +16,19 @@ A scan asked for by another site (`Sec-Fetch-Site` neither `same-origin` nor `no
 - An **owner**: the CLI's summary (skills, repositories with skills of those scanned, the skipped ones) and how long it took,
   then one table per repository with skills, in the CLI's order, each headed by the repository, its skill count and commit.
   The filter works across all of them; a repository with no match is hidden, and "Showing N of M skills" counts them all
+## Map
+The [skill map](map.md) beside the table: a switch above the result, **Table** | **Map** (two buttons, `aria-pressed`), for a repository and an owner alike.
+- The view goes in the address, `&view=map`; *Table* removes it. Switching adds no history entry. A new scan starts in the table
+- **Claude is asked only when the Map view opens**, once per scan: the page sends the skills it has (`POST /api/map`), so nothing is scanned again.
+  Back to the table and to the map again → the same map (or the same failure, until *Try again*); a new scan, or a reload, asks again
+- *Asking*: "The alpaca is asking Claude to draw the map…" with skeleton cards
+- **One card per group**: its name, its skill count, then each skill's name (its file linked to the scanned commit, the path for a local one),
+  the description's first sentence and, for an owner, its repository; in the [map's order](map.md#grouping)
+- **The filter** applies to it too, by the same rules: a skill that doesn't match is hidden, a card with none left too;
+  "Showing N of M skills" and "No skills match “<words>”" as in the table. Filtering never asks Claude again
+- **Claude fails** → in the Map view, "The alpaca could not draw the map", the [message](map.md#failures) and *Try again* (asks again);
+  the table still works
+- No skills → no switch
 ## Look
 Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), serif headings, a woven band above and below the page.
 - *The alpaca* (top hat, monocle, bow tie) is the crest by the name, the idle state's picture, and stands by an error and by "No skills"
@@ -40,8 +53,8 @@ Alpacas, and fancy: fleece cream, terracotta, indigo and gold (light and dark), 
   - **No skills** (`{input}`); **scan error** (`{input}`), as the page shows them
   - **Filter**, once typing stops for 800 ms (not on every key): *a match* (`{text}` in quotes, `{skills}` shown), *no match* (`{text}`),
     *cleared* (it had words, now none). Words unchanged since the last time, or the filter from the address → nothing; nor once the result has gone (back to the idle page)
-  - **Clicks**: a skill's file link (`{name}`), opening a *Full description* (`{name}`), a skill's copies, "Also in …" (`{name}`),
-    and *the empty page*: a click on nothing that does anything (not a link, button, field, label, summary, the table or a bubble)
+  - **Clicks**: a skill's file link, in the table or on the map (`{name}`), opening a *Full description* (`{name}`), a skill's copies, "Also in …" (`{name}`),
+    and *the empty page*: a click on nothing that does anything (not a link, button, field, label, summary, the table, the map or a bubble)
 - *The visitor*: when the crest is *out of view* (scrolled past it, or more than half of it) as a comment starts, the same fancy
   alpaca, at the crest's size, *peeks in from the bottom-left corner* of the window, away from the filter and the table's links,
   with the bubble beside it, its tail pointing at the visitor. It goes with the comment, after 5 s;
@@ -89,10 +102,14 @@ An owner URL → `200` `{ owner, repositories, skipped, warnings }`: `owner` is 
   then the last line, `{ result }` (the owner's answer above) or `{ error }` (the CLI's message, or the short one for an unexpected failure)
 - No input, or the CLI's error (unreachable repository, rate limit…) → `400` `{ error }`, the CLI's message
 - An unexpected failure → `500` `{ error }`, a short message; the details go to the server's stderr
+- `POST /api/map`, `Content-Type: application/json`, `{ skills: [{ id, name, description }] }` (the skills the page shows) →
+  `200` `{ groups: [{ name, skills }] }`, `skills` the ids, by the [map's rules](map.md#grouping); no skills → `{ groups: [] }`, Claude not asked.
+  Claude fails → `502` `{ error }`, the [message](map.md#failures). Not JSON of that shape → `400` `{ error: "Send { skills: [{ id, name, description }] } as JSON." }`;
+  another content type → `415`; a body over 1 MB → `413`; asked for by another site (as `/api/scan`) → `403`
 - `/filter.js`: the CLI's filter module, `src/core/filter.js`, as the page loads it
 - `/phrases.js`: the alpaca's comments, `src/web/static/phrases.js`
 - `/jokes.js`: the idle alpaca's jokes, `src/web/static/jokes.js`
-- Anything else → `404`; anything but `GET` → `405`
+- Anything else → `404`; anything but `GET` → `405` (but `POST` for `/api/map`, and only `POST` there)
 ## Command line
 - `--port 0`: any free port; it prints the address
 - A port in use → a clear message, exit code 1

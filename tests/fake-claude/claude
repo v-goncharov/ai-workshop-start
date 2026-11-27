@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+// A stand-in for `claude -p`, put first on the PATH by the tests and the demo: it never calls a model.
+// It answers with the recorded answer in FAKE_CLAUDE_ANSWER (a file), or as FAKE_CLAUDE_EXIT, FAKE_CLAUDE_STDERR and
+// FAKE_CLAUDE_SLEEP (seconds) say; FAKE_CLAUDE_LOG, a file, gets its arguments, its directory and the prompt it read.
+import { appendFileSync, readFileSync } from 'node:fs';
+
+let prompt = '';
+for await (const chunk of process.stdin) prompt += chunk;
+const env = process.env;
+if (env.FAKE_CLAUDE_LOG) appendFileSync(env.FAKE_CLAUDE_LOG, `${JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), prompt })}\n`);
+if (env.FAKE_CLAUDE_SLEEP) await new Promise((resolve) => setTimeout(resolve, Number(env.FAKE_CLAUDE_SLEEP) * 1000));
+if (env.FAKE_CLAUDE_STDERR) process.stderr.write(env.FAKE_CLAUDE_STDERR);
+if (env.FAKE_CLAUDE_ANSWER) process.stdout.write(readFileSync(env.FAKE_CLAUDE_ANSWER, 'utf8'));
+process.exitCode = Number(env.FAKE_CLAUDE_EXIT ?? 0);

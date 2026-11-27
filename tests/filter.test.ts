@@ -94,7 +94,7 @@ test('filter: --filter before or after the input → the same result', async (t)
 });
 
 test('filter: --filter without a value, or given twice → usage, exit code 1', async () => {
-  const usage = 'Usage: skill-atlas scan <GitHub URL | directory> [--filter "<words>"]';
+  const usage = 'Usage: skill-atlas scan <GitHub URL | directory> [--filter "<words>"] [--map]';
   for (const args of [
     [FIXTURE, '--filter'],
     ['--filter'],
