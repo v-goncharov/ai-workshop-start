@@ -5,7 +5,7 @@
 //   node .claude/skills/implement/ask-slack.ts --thread <ts>          only wait, post nothing
 //
 // Options: --channel <name> (default very-secrect-alpaca-channel), --wait <seconds> (default 3600),
-// --poll <seconds> (default 60). Needs SLACK_BOT_TOKEN.
+// --poll <seconds> (default 60). Needs SLACK_BOT_TOKEN. SLACK_API_URL overrides https://slack.com/api (tests).
 //
 // Prints `thread: <ts>` first, then each human reply as `answer from <user>: <text>`.
 // Exit 0: answered. Exit 2: no answer within --wait. Exit 1: error.
@@ -33,8 +33,12 @@ const token = process.env.SLACK_BOT_TOKEN;
 if (!token) fail('SLACK_BOT_TOKEN is not set');
 if (!text && !thread) fail('nothing to ask: give a question, or --thread <ts> to wait for replies');
 
+const api = process.env.SLACK_API_URL ?? 'https://slack.com/api';
+
+class Transient extends Error {}
+
 async function slack(method: string, params: Record<string, string>, post = false): Promise<any> {
-  const url = new URL(`https://slack.com/api/${method}`);
+  const url = new URL(`${api}/${method}`);
   const init: RequestInit = { headers: { Authorization: `Bearer ${token}` } };
   if (post) {
     init.method = 'POST';
@@ -43,8 +47,15 @@ async function slack(method: string, params: Record<string, string>, post = fals
   } else {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   }
-  const res = await fetch(url, init);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    throw new Transient(`${method}: ${(e as Error).message}`);
+  }
+  if (res.status === 429 || res.status >= 500) throw new Transient(`${method}: HTTP ${res.status}`);
   const body = await res.json();
+  if (body.error === 'ratelimited') throw new Transient(`${method}: ratelimited`);
   if (!body.ok) fail(`${method}: ${body.error}`);
   return body;
 }
@@ -78,7 +89,13 @@ console.log(`thread: ${thread}`);
 
 const deadline = Date.now() + waitSeconds * 1000;
 while (true) {
-  const { messages } = await slack('conversations.replies', { channel, ts: thread, oldest: since, limit: '200' });
+  let messages: any[] = [];
+  try {
+    ({ messages } = await slack('conversations.replies', { channel, ts: thread, oldest: since, limit: '200' }));
+  } catch (e) {
+    if (!(e instanceof Transient)) throw e;
+    console.error(`ask-slack: ${e.message}, retrying`); // a blip must not end an hour-long wait
+  }
   const answers = messages.filter((m: any) =>
     Number(m.ts) > Number(since) && m.user && m.user !== me && !m.bot_id && m.ts !== thread);
   if (answers.length) {
