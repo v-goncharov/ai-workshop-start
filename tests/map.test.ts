@@ -33,13 +33,13 @@ function cli(t: TestContext, args: string[], env: Record<string, string> = {}, {
   return { code: result.status, stdout: result.stdout.trimEnd(), stderr: result.stderr.trimEnd(), calls };
 }
 
-test('map: claude -p --model haiku, away from the repository; the prompt on stdin: each skill’s id, name, full description, the answer’s shape', async (t) => {
+test('map: claude -p --model haiku with no tools and no MCP servers, away from the repository; the prompt on stdin: each skill’s id, name, full description, the answer’s shape', async (t) => {
   const { root, url } = repository(t);
   const result = cli(t, ['scan', root, '--map'], { FAKE_CLAUDE_ANSWER: RECORDED('repo') });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.calls.length, 1);
   const [{ args, cwd, prompt }] = result.calls;
-  assert.deepEqual(args, ['-p', '--model', 'haiku']);
+  assert.deepEqual(args, ['-p', '--model', 'haiku', '--tools', '', '--strict-mcp-config']);
   assert.notEqual(cwd, root);
   assert.match(prompt, /\{"groups":\[\{"name":"<group name>","skills":\["<skill id>"\]\}\]\}/);
   assert.match(prompt, /JSON only/);

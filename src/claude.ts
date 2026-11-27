@@ -1,4 +1,5 @@
-// Asks Claude Code for the skill map (spec/map.md): `claude -p --model haiku`, the prompt on stdin, the answer on stdout.
+// Asks Claude Code for the skill map (spec/map.md): `claude -p --model haiku --tools '' --strict-mcp-config`,
+// the prompt on stdin, the answer on stdout.
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { AtlasError } from './core/errors.ts';
@@ -6,8 +7,10 @@ import { AtlasError } from './core/errors.ts';
 /** How long Claude has to answer: 3 minutes, less in the tests. */
 export function askClaude(prompt: string, { timeout = 180_000 } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
+    // The prompt holds the scanned descriptions, untrusted text: no tools and no MCP servers, so Claude can only answer.
     // Away from the scanned repository: its CLAUDE.md is none of the map's business.
-    const child = spawn('claude', ['-p', '--model', 'haiku'], { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const args = ['-p', '--model', 'haiku', '--tools', '', '--strict-mcp-config'];
+    const child = spawn('claude', args, { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

@@ -3,6 +3,8 @@ The scanned skills **grouped by what they are about**, so a repository (or a who
 In the [CLI](cli.md#skill-map), `--map`; in the [web view](web.md#map), the *Map* view beside the table.
 ## Grouping
 - **Claude groups them**, the only way: `claude -p --model haiku` (Claude Code, the latest Haiku; *no other model*, no heuristic)
+  - with **no tools and no MCP servers** (`--tools '' --strict-mcp-config`): the descriptions come from any repository, so they
+    are untrusted text, and grouping is text in, text out; a planted "use the tools to …" has nothing to act with
 - The prompt, on stdin: each skill's **id** (`repo:path`), **name** and *full* description, and the answer's shape:
   JSON only, `{"groups":[{"name":"<group name>","skills":["<skill id>",…]}]}`, a short name per group, every skill in exactly one
 - **Every skill appears exactly once**:
