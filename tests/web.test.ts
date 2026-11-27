@@ -12,12 +12,13 @@ import { join } from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 import { JSDOM, type DOMWindow } from 'jsdom';
 import { AtlasError } from '../src/core/errors.ts';
+import type { AskClaude } from '../src/core/map.ts';
 import { scanOwner } from '../src/core/owner.ts';
 import { replay } from '../src/core/replay.ts';
 import { createWebServer, listen, type OwnerScanResponse, type ScanResponse } from '../src/web/server.ts';
 import { JOKES } from '../src/web/static/jokes.js';
 import { PHRASES } from '../src/web/static/phrases.js';
-import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, repository } from './helpers.ts';
+import { acme, atlas, CLI, EXAMPLE_COMMIT, FIXTURE, open, replayClaude, repository } from './helpers.ts';
 
 const logged: string[] = [];
 const slow = Promise.withResolvers<void>();
@@ -48,8 +49,11 @@ const server = createWebServer({
     }
     return scanOwner(input.replace(/\/(slow|listing|scanning)$/, '/acme'), { fetch: replay(acme()), progress });
   },
+  // Claude, replayed: what the test says it answers (tests/recorded/), never the model.
+  askClaude: (prompt) => claude(prompt),
   log: (text) => logged.push(text),
 });
+let claude: AskClaude = replayClaude('repo');
 const address = await listen(server, 0);
 after(() => server.close());
 
@@ -1310,4 +1314,210 @@ test('the page’s progress: listing (the bar moving, no end known), then scanne
   assert.deepEqual([trail.classList.contains('roaming'), trail.classList.contains('resting')], [false, false]);
   assert.equal(trail.style.getPropertyValue('--at'), '0.3');
   halted.resolve();
+});
+
+// The skill map in the web view (spec/web.md, "Map"; spec/map.md): POST /api/map, and the page's Map view. Claude is replayed.
+
+/** POST /api/map with `body`, as the page sends it. */
+const postMap = (body: unknown, headers: Record<string, string> = {}) =>
+  get('/api/map', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+
+/** The skills of the test repository, as the page sends them. */
+const REPO_SKILLS = [
+  { id: 'repo:.claude/skills/build-tools-bump-gradle-api/SKILL.md', name: 'build-tools-bump-gradle-api', description: 'Bumps the Gradle API version.' },
+  { id: 'repo:.claude/skills/commits/SKILL.md', name: 'commits', description: 'Write commit messages.' },
+  { id: 'repo:.agents/skills/mps-tests/SKILL.md', name: 'mps-tests', description: 'Run the MPS tests.' },
+];
+
+/** Claude replayed with `name` for the rest of the test. */
+function claudeAnswers(t: TestContext, name: string) {
+  const ask = replayClaude(name);
+  claude = ask;
+  t.after(() => (claude = replayClaude('repo')));
+  return ask;
+}
+
+/** The cards shown: each group's name, count and the names of its skills shown. */
+function cards(window: DOMWindow) {
+  const map = window.document.querySelector('section.map') as HTMLElement | null;
+  if (!map || map.hidden) return undefined;
+  return ([...map.querySelectorAll('section.group')] as HTMLElement[]).filter((card) => !card.hidden).map((card) => ({
+    name: card.querySelector('h2')?.textContent,
+    count: card.querySelector('.count')?.textContent,
+    skills: ([...card.querySelectorAll('li')] as HTMLElement[]).filter((item) => !item.hidden).map((item) => item.querySelector('.name')?.textContent),
+  }));
+}
+
+/** Clicks the view switch's `label` button. */
+function view(window: DOMWindow, label: 'Table' | 'Map') {
+  const button = ([...window.document.querySelectorAll('.views button')] as HTMLButtonElement[]).find((button) => button.textContent === label);
+  assert.ok(button, `the ${label} button`);
+  button.click();
+}
+
+test('POST /api/map: the skills grouped by Claude, by the map’s rules; every skill exactly once', async (t) => {
+  const ask = claudeAnswers(t, 'messy');
+  const response = await postMap({ skills: REPO_SKILLS });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    groups: [
+      { name: 'Testing', skills: ['repo:.claude/skills/build-tools-bump-gradle-api/SKILL.md', 'repo:.agents/skills/mps-tests/SKILL.md'] },
+      { name: 'Other', skills: ['repo:.claude/skills/commits/SKILL.md'] },
+    ],
+  });
+  assert.equal(ask.prompts.length, 1);
+  assert.match(ask.prompts[0], /\{"id":"repo:\.claude\/skills\/commits\/SKILL\.md","name":"commits","description":"Write commit messages\."\}/);
+});
+
+test('POST /api/map: no skills → no groups, Claude not asked; Claude fails → 502 with the message', async (t) => {
+  const ask = claudeAnswers(t, 'repo');
+  const empty = await postMap({ skills: [] });
+  assert.deepEqual([empty.status, await empty.json()], [200, { groups: [] }]);
+  assert.equal(ask.prompts.length, 0);
+  claudeAnswers(t, 'not-a-map');
+  const failed = await postMap({ skills: REPO_SKILLS });
+  assert.deepEqual([failed.status, await failed.json()], [502, { error: "claude's answer is not a skill map" }]);
+});
+
+test('POST /api/map: not that JSON → 400; another content type → 415; over 1 MB → 413; another site → 403; only POST', async (t) => {
+  const ask = claudeAnswers(t, 'repo');
+  const shape = { error: 'Send { skills: [{ id, name, description }] } as JSON.' };
+  for (const body of ['not json', {}, { skills: 'all' }, { skills: [{ id: 'a', name: 'b' }] }, { skills: [null] }]) {
+    const response = await postMap(body);
+    assert.deepEqual([response.status, await response.json()], [400, shape], JSON.stringify(body));
+  }
+  const text = await postMap({ skills: REPO_SKILLS }, { 'content-type': 'text/plain' });
+  assert.equal(text.status, 415);
+  const huge = await postMap({ skills: [{ id: 'x', name: 'x', description: 'x'.repeat(1024 * 1024) }] });
+  assert.equal(huge.status, 413);
+  const crossSite = await postMap({ skills: REPO_SKILLS }, { 'sec-fetch-site': 'cross-site' });
+  assert.equal(crossSite.status, 403);
+  assert.equal((await get('/api/map')).status, 405);
+  assert.equal((await get('/api/scan?input=x', { method: 'POST' })).status, 405);
+  assert.equal(ask.prompts.length, 0, 'Claude is asked for none of them');
+});
+
+test('the Map view: a Table | Map switch; one card per group, its name, count and skills; &view=map in the address, no history entry', async (t) => {
+  const { root } = repository(t);
+  const ask = claudeAnswers(t, 'repo');
+  const window = await page(t, `/?input=${encodeURIComponent(root)}`);
+  const document = window.document;
+  const buttons = [...document.querySelectorAll('.views button')].map((button) => [button.textContent, button.getAttribute('aria-pressed')]);
+  assert.deepEqual(buttons, [['Table', 'true'], ['Map', 'false']]);
+  assert.equal(cards(window), undefined, 'the table first');
+  assert.equal(ask.prompts.length, 0, 'Claude not asked for the table');
+  const entries = window.history.length;
+  view(window, 'Map');
+  assert.match(document.querySelector('section.map')?.textContent ?? '', /The alpaca is asking Claude to draw the map…/);
+  await shows(document, 'section.group');
+  assert.deepEqual(cards(window), [
+    { name: 'Build', count: '2 skills', skills: ['build-tools-bump-gradle-api', 'mps-tests'] },
+    { name: 'Git', count: '1 skill', skills: ['commits'] },
+  ]);
+  assert.equal((document.querySelector('.table-view') as HTMLElement).hidden, true);
+  assert.deepEqual([...document.querySelectorAll('.views button')].map((button) => button.getAttribute('aria-pressed')), ['false', 'true']);
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}&view=map`);
+  assert.equal(window.history.length, entries);
+  // A local skill: its path, not a link; the first sentence.
+  const item = document.querySelector('section.group li') as HTMLElement;
+  assert.equal(item.querySelector('span.path')?.textContent, '.claude/skills/build-tools-bump-gradle-api/SKILL.md');
+  assert.equal(item.querySelector('a'), null);
+  assert.equal(item.querySelector('.description')?.textContent, 'Bumps the Gradle API version that Kotlin Gradle plugins are compiled against.');
+  view(window, 'Table');
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}`);
+  assert.equal(cards(window), undefined);
+  // Back to the map: the same one, Claude not asked again.
+  view(window, 'Map');
+  assert.equal(cards(window)?.length, 2);
+  assert.equal(ask.prompts.length, 1);
+});
+
+test('the Map view of a GitHub repository: each skill’s file linked to the scanned commit', async (t) => {
+  claude = async () => JSON.stringify({ groups: [{ name: 'Git', skills: ['JetBrains/example:.claude/skills/commits/SKILL.md'] }] });
+  t.after(() => (claude = replayClaude('repo')));
+  const window = await page(t, `/?input=${encodeURIComponent('https://github.com/JetBrains/example')}&view=map`, { until: 'section.group' });
+  assert.deepEqual(cards(window), [{ name: 'Git', count: '1 skill', skills: ['commits'] }]);
+  const link = window.document.querySelector('section.group li a.path') as HTMLAnchorElement;
+  assert.equal(link.href, `https://github.com/JetBrains/example/blob/${EXAMPLE_COMMIT}/.claude/skills/commits/SKILL.md`);
+});
+
+test('?view=map in the address: the map on load; a reload asks Claude again; a new scan starts in the table', async (t) => {
+  const { root } = repository(t);
+  const ask = claudeAnswers(t, 'repo');
+  const path = `/?input=${encodeURIComponent(root)}&view=map`;
+  const window = await page(t, path, { until: 'section.group' });
+  assert.equal(cards(window)?.length, 2);
+  // Scanned again from the address, as a reload (or back and forward) does: Claude asked again, nothing is stored.
+  window.history.pushState(null, '', path);
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  await shows(window.document, '.table-view');
+  await shows(window.document, 'section.group');
+  assert.equal(cards(window)?.length, 2);
+  assert.equal(ask.prompts.length, 2, 'nothing is stored: the reload asks again');
+  // A new scan from the form: the table, without &view=map.
+  const input = window.document.getElementById('input') as HTMLInputElement;
+  input.value = root;
+  t.mock.method(Math, 'random', () => 0.5); // no refusal
+  (window.document.getElementById('scan-form') as HTMLFormElement).requestSubmit();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await shows(window.document, '.views');
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}`);
+  assert.equal(cards(window), undefined);
+});
+
+test('the filter applies to the map: skills and cards with no match hidden, the counts; no match says so', async (t) => {
+  const { root } = repository(t);
+  const ask = claudeAnswers(t, 'repo');
+  const window = await page(t, `/?input=${encodeURIComponent(root)}&view=map&filter=gradle`, { until: 'section.group' });
+  assert.deepEqual(cards(window), [{ name: 'Build', count: '1 skill', skills: ['build-tools-bump-gradle-api'] }]);
+  assert.equal(window.document.querySelector('.filter .meta')?.textContent, 'Showing 1 of 3 skills');
+  type(window, 'commit');
+  assert.deepEqual(cards(window), [{ name: 'Git', count: '1 skill', skills: ['commits'] }]);
+  type(window, 'kubernetes');
+  assert.deepEqual(cards(window), []);
+  const noMatch = window.document.querySelector('section.map .no-match') as HTMLElement;
+  assert.equal(noMatch.hidden, false);
+  assert.match(noMatch.textContent ?? '', /No skills match “kubernetes”\. Clear the filter/);
+  (noMatch.querySelector('button') as HTMLButtonElement).click();
+  assert.equal(cards(window)?.length, 2);
+  assert.equal(window.location.search, `?input=${encodeURIComponent(root)}&view=map`, 'the view stays in the address');
+  assert.equal(ask.prompts.length, 1, 'filtering never asks Claude again');
+});
+
+test('an owner’s Map view: one map over all its repositories, each skill with its repository', async (t) => {
+  claudeAnswers(t, 'acme');
+  const window = await page(t, `/?input=${encodeURIComponent('https://github.com/acme')}&view=map`, { until: 'section.group' });
+  assert.deepEqual(cards(window), [
+    { name: 'Build and test', count: '2 skills', skills: ['mps-tests', 'build'] },
+    { name: 'Docs', count: '1 skill', skills: ['api-docs'] },
+  ]);
+  assert.deepEqual([...window.document.querySelectorAll('section.group .repo')].map((repo) => repo.textContent), [' · acme/MPS', ' · acme/huge', ' · acme/api']);
+  assert.equal(([...window.document.querySelectorAll('section.repository')] as HTMLElement[]).every((section) => section.closest('.table-view')?.hasAttribute('hidden')), true);
+});
+
+test('Claude fails: the Map view says so, with Try again, which asks again; the table still works', async (t) => {
+  const { root } = repository(t);
+  claudeAnswers(t, 'not-a-map');
+  const window = await page(t, `/?input=${encodeURIComponent(root)}&view=map`, { until: '.map-error' });
+  const error = window.document.querySelector('.map-error') as HTMLElement;
+  assert.equal(error.getAttribute('role'), 'alert');
+  assert.equal(error.querySelector('.state-title')?.textContent, 'The alpaca could not draw the map');
+  assert.equal(error.querySelector('.message')?.textContent, "claude's answer is not a skill map");
+  view(window, 'Table');
+  assert.deepEqual(shown(window).names, ['build-tools-bump-gradle-api', 'commits', 'mps-tests']);
+  // Back to the map: the error stays; only Try again asks again.
+  view(window, 'Map');
+  assert.ok(window.document.querySelector('.map-error'));
+  const ask = claudeAnswers(t, 'repo');
+  const again = [...window.document.querySelectorAll('.map-error button')].find((button) => button.textContent === 'Try again') as HTMLButtonElement;
+  again.click();
+  await shows(window.document, 'section.group');
+  assert.equal(cards(window)?.length, 2);
+  assert.equal(ask.prompts.length, 1);
+});
+
+test('no skills: no Table | Map switch', async (t) => {
+  const window = await page(t, `/?input=${encodeURIComponent(new URL('../src', import.meta.url).pathname)}`, { result: false });
+  assert.match(window.document.querySelector('.state .state-title')?.textContent ?? '', /^No skills in /);
+  assert.equal(window.document.querySelector('.views'), null);
 });

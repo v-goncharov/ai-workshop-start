@@ -1,0 +1,12 @@
+Here is the skill map you asked for:
+
+```json
+{"groups":[
+  {"name":"Testing","skills":["repo:.agents/skills/mps-tests/SKILL.md","repo:.claude/skills/invented/SKILL.md"]},
+  {"name":"Nothing real","skills":["repo:.claude/skills/nope/SKILL.md"]},
+  {"name":"other","skills":["repo:.agents/skills/mps-tests/SKILL.md"]},
+  {"name":"  Testing ","skills":["repo:.claude/skills/build-tools-bump-gradle-api/SKILL.md"]}
+]}
+```
+
+Every skill is in one group.

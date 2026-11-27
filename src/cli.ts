@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The Node client: a GitHub repository or owner through the GitHub API, or a local directory; stdout and
 // stderr, or the web view. Nothing is stored.
+import { askClaude } from './claude.ts';
 import { run } from './commands.ts';
 import { openGitHub, parseGitHubUrl } from './core/github.ts';
 import { scanOwner as scanGitHubOwner, type Progress } from './core/owner.ts';
@@ -14,7 +15,8 @@ const scanOwner = (input: string, progress?: (progress: Progress) => void) => sc
 process.exitCode = await run(process.argv.slice(2), {
   open,
   scanOwner,
+  askClaude: (prompt) => askClaude(prompt),
   print: (text) => console.log(text),
   error: (text) => console.error(text),
-  serve: (port) => listen(createWebServer({ open, scanOwner, log: (text) => console.error(text) }), port),
+  serve: (port) => listen(createWebServer({ open, scanOwner, askClaude: (prompt) => askClaude(prompt), log: (text) => console.error(text) }), port),
 });

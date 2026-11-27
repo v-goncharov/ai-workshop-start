@@ -226,18 +226,18 @@ function remarkOnScan(count, elapsed) {
 
 /** A skill's file, opening its full description, its copies; or a click on nothing that does anything. */
 function remarkOnClick(target) {
-  const name = target.closest('tr')?.querySelector('.name')?.textContent ?? '';
+  const name = target.closest('tr, .map li')?.querySelector('.name')?.textContent ?? '';
   if (target.closest('a.path')) return remark('openFile', { name });
   const summary = target.closest('.description summary');
   if (summary) return summary.parentElement.open || remark('fullDescription', { name });
   if (target.closest('.copies')) return remark('copies', { name });
-  if (!target.closest('a, button, input, select, textarea, label, summary, table, .bubble')) remark('emptyPage');
+  if (!target.closest('a, button, input, select, textarea, label, summary, table, .map, .bubble')) remark('emptyPage');
 }
 
-/** The page's address for a scan: `/?input=<it>`, and `&filter=<words>` unless the filter is blank. */
-function addressFor(value, words = '') {
+/** The page's address for a scan: `/?input=<it>`, `&filter=<words>` unless the filter is blank, `&view=map` in the Map view. */
+function addressFor(value, words = '', view = '') {
   const filter = filterWords(words).join(' ');
-  return `/?input=${encodeURIComponent(value)}${filter ? `&filter=${encodeURIComponent(filter)}` : ''}`;
+  return `/?input=${encodeURIComponent(value)}${filter ? `&filter=${encodeURIComponent(filter)}` : ''}${view === 'map' ? '&view=map' : ''}`;
 }
 
 function fromLocation() {
@@ -247,6 +247,7 @@ function fromLocation() {
   if (value) scanInput(value);
   else {
     current?.abort();
+    mapping?.abort();
     setBusy(false);
     clearTimeout(typing); // the filter is gone: nothing to say about it
     result.innerHTML = idle;
@@ -256,6 +257,7 @@ function fromLocation() {
 
 async function scanInput(value) {
   current?.abort();
+  mapping?.abort();
   const controller = (current = new AbortController());
   setBusy(true);
   showLoading();
@@ -455,28 +457,36 @@ function noSkills(where) {
 
 /**
  * A filter over the rows of one or more tables, by the CLI's rules: `rows` are { skill, row, section? }; a section
- * with no matching row is hidden. `noMatch` shows when nothing matches, its message in `message`.
- * It starts from ?filter= in the address and keeps it there. Returns the field and the live count.
+ * with no matching row is hidden, and its `.count`, if it has one, counts the rows shown. `noMatch` shows when nothing
+ * matches, its message in `message`. More rows, each set with its own no-match, come with `add` (the map's cards).
+ * It starts from ?filter= in the address and keeps it there. Returns the field, with the live count, and `add`.
  */
 function rowFilter(rows, total, noMatch, message = noMatch) {
   const count = h('p', { class: 'meta', 'aria-live': 'polite' });
+  const sets = [{ rows, noMatch, message }];
   let shown = 0;
   const applyFilter = (text = filter.value) => {
     const words = filterWords(text);
-    shown = 0;
-    const sections = new Map();
-    for (const { skill, row, section } of rows) {
-      const match = matchesFilter(skill, words);
-      row.hidden = !match;
-      if (match) shown++;
-      if (section) sections.set(section, (sections.get(section) ?? false) || match);
+    for (const { rows, noMatch, message } of sets) {
+      shown = 0;
+      const sections = new Map();
+      for (const { skill, row, section } of rows) {
+        const match = matchesFilter(skill, words);
+        row.hidden = !match;
+        if (match) shown++;
+        if (section) sections.set(section, (sections.get(section) ?? 0) + (match ? 1 : 0));
+      }
+      for (const [section, matching] of sections) {
+        section.hidden = matching === 0;
+        const counted = section.querySelector('.count');
+        if (counted) counted.textContent = plural(matching, 'skill', 'skills');
+      }
+      noMatch.hidden = shown > 0;
+      message.replaceChildren(
+        `No skills match “${words.join(' ')}”. `,
+        h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
+      );
     }
-    for (const [section, any] of sections) section.hidden = !any;
-    noMatch.hidden = shown > 0;
-    message.replaceChildren(
-      `No skills match “${words.join(' ')}”. `,
-      h('button', { type: 'button', class: 'link', onclick: () => { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.focus(); } }, 'Clear the filter'),
-    );
     count.textContent = words.length > 0 ? `Showing ${shown.toLocaleString('en')} of ${plural(total, 'skill', 'skills')}` : '';
   };
   const filter = h('input', {
@@ -501,14 +511,21 @@ function rowFilter(rows, total, noMatch, message = noMatch) {
   });
   // In the address, so a filtered scan can be shared and reloaded; no history entry per key.
   const inAddress = (text) => {
-    const url = addressFor(new URLSearchParams(location.search).get('input') ?? '', text);
+    const params = new URLSearchParams(location.search);
+    const url = addressFor(params.get('input') ?? '', text, params.get('view') ?? '');
     if (location.pathname + location.search !== url) history.replaceState(null, '', url);
   };
   // ?filter= from the address: a shared or reloaded filtered scan.
   filter.value = new URLSearchParams(location.search).get('filter') ?? '';
   let considered = filterWords(filter.value).join(' '); // the words the alpaca last thought about
   applyFilter();
-  return h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count);
+  return {
+    element: h('div', { class: 'filter' }, h('label', { for: 'filter' }, 'Filter by name, description or path'), filter, count),
+    add(rows, noMatch, message = noMatch) {
+      sets.push({ rows, noMatch, message });
+      applyFilter();
+    },
+  };
 }
 
 /** An owner: the summary, then one table per repository with skills; the filter goes across all of them. */
@@ -542,13 +559,12 @@ function showOwnerResult({ owner, repositories, skipped, warnings }, elapsed) {
     return section;
   });
   const noMatch = h('p', { class: 'state no-match', hidden: true });
+  const filter = rowFilter(rows, total, noMatch);
+  const listed = repositories.flatMap(({ repository, skills }) => skills.map((skill) => ({ repository, skill })));
+  const { views, panels } = mapViews(h('div', { class: 'table-view' }, ...sections, noMatch), listed, filter, true);
 
-  show(
-    h('div', { class: 'summary' }, h('div', {}, heading, meta), rowFilter(rows, total, noMatch)),
-    warningList(warnings),
-    ...sections,
-    noMatch,
-  );
+  show(h('div', { class: 'summary' }, h('div', {}, heading, meta), filter.element, views), warningList(warnings), ...panels);
+  openView();
 }
 
 function showResult({ repository, skills, warnings }, elapsed) {
@@ -565,11 +581,109 @@ function showResult({ repository, skills, warnings }, elapsed) {
 
   const rows = skills.map((skill) => ({ skill, row: skillRow(skill, isWeb) }));
   const noMatch = h('tr', { class: 'no-match', hidden: true }, h('td', { colspan: '3' }));
+  const filter = rowFilter(rows, skills.length, noMatch, noMatch.firstChild);
+  const tableView = h('div', { class: 'table-view' }, table([...rows.map(({ row }) => row), noMatch]));
+  const { views, panels } = mapViews(tableView, skills.map((skill) => ({ repository, skill })), filter, false);
 
-  show(
-    h('div', { class: 'summary' }, h('div', {}, heading, meta), rowFilter(rows, skills.length, noMatch, noMatch.firstChild)),
-    warningList(warnings),
-    table([...rows.map(({ row }) => row), noMatch]),
+  show(h('div', { class: 'summary' }, h('div', {}, heading, meta), filter.element, views), warningList(warnings), ...panels);
+  openView();
+}
+
+// The skill map (spec/map.md, spec/web.md "Map"): a Map view beside the table, one card per group, Claude asked once per
+// scan, when the view opens. The view goes in the address, &view=map.
+let mapping; // the request for the map in flight, so a new scan cancels it
+let openView = () => {}; // the view from the address, once a result is shown
+
+/** The Table | Map switch and the two panels; `listed` is [{ repository, skill }] in the CLI's order. */
+function mapViews(tableView, listed, filter, withRepository) {
+  const mapView = h('section', { class: 'map', 'aria-label': 'Skill map', hidden: true });
+  const tableButton = h('button', { type: 'button', class: 'view', 'aria-pressed': 'true', onclick: () => setView('table', true) }, 'Table');
+  const mapButton = h('button', { type: 'button', class: 'view', 'aria-pressed': 'false', onclick: () => setView('map', true) }, 'Map');
+  let drawn = false; // asked, or asking: the map stays until the next scan
+
+  /** Shows `view`; on a click, the address follows (from the address, it already says so). */
+  const setView = (view, click = false) => {
+    const map = view === 'map';
+    tableView.hidden = map;
+    mapView.hidden = !map;
+    tableButton.setAttribute('aria-pressed', String(!map));
+    mapButton.setAttribute('aria-pressed', String(map));
+    if (click) {
+      const params = new URLSearchParams(location.search);
+      const url = addressFor(params.get('input') ?? '', params.get('filter') ?? '', view);
+      if (location.pathname + location.search !== url) history.replaceState(null, '', url);
+    }
+    if (map && !drawn) draw();
+  };
+
+  const draw = async () => {
+    drawn = true;
+    mapping?.abort();
+    const controller = (mapping = new AbortController());
+    mapView.replaceChildren(
+      h('p', { class: 'map-status' }, 'The alpaca is asking Claude to draw the map…'),
+      h('div', { class: 'groups', 'aria-hidden': 'true' },
+        Array.from({ length: 3 }, (_, index) => h('div', { class: 'group' }, h('span', { class: `skeleton w${index % 4}` }), h('span', { class: 'skeleton w-short' })))),
+    );
+    let body;
+    try {
+      const response = await fetch('/api/map', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skills: listed.map(({ skill }) => ({ id: skill.id, name: skill.name, description: skill.description })) }),
+      });
+      body = await response.json().catch(() => ({ error: `The server answered ${response.status} without details.` }));
+    } catch {
+      if (controller.signal.aborted) return;
+      body = { error: 'The Skill Atlas server is not answering.' };
+    }
+    if (controller.signal.aborted) return;
+    if (body.error !== undefined || !Array.isArray(body.groups)) {
+      // The error stays, in this view, until Try again asks again.
+      return mapView.replaceChildren(
+        h('div', { class: 'error map-error', role: 'alert' },
+          alpaca(),
+          h('h2', { class: 'state-title' }, 'The alpaca could not draw the map'),
+          h('p', { class: 'message' }, body.error ?? 'The server answered without a map.'),
+          h('p', {}, h('button', { type: 'button', class: 'secondary', onclick: () => draw() }, 'Try again')),
+        ),
+      );
+    }
+    const byId = new Map(listed.map((entry) => [entry.skill.id, entry]));
+    const rows = [];
+    const cards = body.groups.map((group) => {
+      const card = h('section', { class: 'group' });
+      const items = group.skills.filter((id) => byId.has(id)).map((id) => {
+        const { repository, skill } = byId.get(id);
+        const item = mapItem(repository, skill, withRepository);
+        rows.push({ skill, row: item, section: card });
+        return item;
+      });
+      card.append(h('h2', {}, group.name), h('p', { class: 'meta count' }, plural(items.length, 'skill', 'skills')), h('ul', {}, items));
+      return card;
+    });
+    const noMatch = h('p', { class: 'state no-match', hidden: true });
+    mapView.replaceChildren(h('div', { class: 'groups' }, cards), noMatch);
+    filter.add(rows, noMatch);
+  };
+
+  openView = () => setView(new URLSearchParams(location.search).get('view') === 'map' ? 'map' : 'table');
+  return { views: h('div', { class: 'views', role: 'group', 'aria-label': 'View' }, tableButton, mapButton), panels: [tableView, mapView] };
+}
+
+/** A skill on a map card: its name, its file (linked at the scanned commit; the path for a local one), the first sentence; an owner's, its repository. */
+function mapItem(repository, skill, withRepository) {
+  const isWeb = !repository.local;
+  return h('li', {},
+    h('p', {},
+      h('span', { class: 'name' }, skill.name),
+      withRepository && h('span', { class: 'repo' }, ` · ${repository.id}`),
+    ),
+    skill.summary ? h('p', { class: 'description' }, skill.summary) : h('p', { class: 'description none' }, 'No description in the front matter'),
+    isWeb
+      ? h('a', { class: 'path', href: skill.link, title: `${skill.path} at the scanned commit` }, skill.path)
+      : h('span', { class: 'path', title: decodeURI(skill.link.replace(/^file:\/\//, '')) }, skill.path),
   );
 }
 

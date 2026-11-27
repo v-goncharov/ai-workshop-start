@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AtlasError } from '../core/errors.ts';
 import { parseGitHubOwner } from '../core/github.ts';
+import { mapSkills, type AskClaude, type MapSkill } from '../core/map.ts';
 import { firstSentence, skillLink } from '../core/model.ts';
 import type { OwnerResult, Progress } from '../core/owner.ts';
 import { scan, type ScanResult, type Source } from '../core/scan.ts';
@@ -13,6 +14,8 @@ export type WebOptions = {
   open(input: string): Promise<Source>;
   /** Scans every repository of a GitHub organization or user, as the CLI does. */
   scanOwner?(input: string, progress?: (progress: Progress) => void): Promise<OwnerResult>;
+  /** Asks Claude, for the skill map (spec/map.md); without it, the map fails as in the browser terminal. */
+  askClaude?: AskClaude;
   /** Unexpected failures, for the server log; the page gets a short message. */
   log?(text: string): void;
 };
@@ -91,6 +94,11 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
     return json(response, 403, { error: 'Skill Atlas answers only at 127.0.0.1 or localhost. Open the address skill-atlas serve printed.' });
   }
   const url = new URL(request.url ?? '/', 'http://localhost');
+  if (url.pathname === '/api/map') {
+    if (request.method !== 'POST') return json(response, 405, { error: 'Only POST is supported here.' });
+    if (!isOwnSite(request)) return json(response, 403, { error: 'Maps are drawn only for the Skill Atlas page itself.' });
+    return map(request, response, options);
+  }
   if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { error: 'Only GET is supported.' });
 
   if (url.pathname === '/api/scan') {
@@ -117,6 +125,39 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
 }
 
 const NDJSON = 'application/x-ndjson';
+const MAP_LIMIT = 1024 * 1024;
+const MAP_SHAPE = 'Send { skills: [{ id, name, description }] } as JSON.';
+
+/** `POST /api/map`: the skills the page shows, grouped by Claude; nothing is scanned again. */
+async function map(request: IncomingMessage, response: ServerResponse, options: WebOptions) {
+  if (!/^application\/json(\s*;|$)/i.test(request.headers['content-type'] ?? '')) return json(response, 415, { error: MAP_SHAPE });
+  // Read to the end even when it is too large, so the answer goes back on a socket still open.
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size <= MAP_LIMIT) chunks.push(chunk);
+  }
+  if (size > MAP_LIMIT) return json(response, 413, { error: 'Too many skills for one map: the request is over 1 MB.' });
+  const body = Buffer.concat(chunks).toString('utf8');
+  let skills: MapSkill[];
+  try {
+    skills = JSON.parse(body).skills;
+  } catch {
+    return json(response, 400, { error: MAP_SHAPE });
+  }
+  const isText = (value: unknown) => typeof value === 'string';
+  if (!Array.isArray(skills) || !skills.every((skill) => skill && isText(skill.id) && isText(skill.name) && isText(skill.description))) {
+    return json(response, 400, { error: MAP_SHAPE });
+  }
+  const ask = options.askClaude ?? (() => Promise.reject(new AtlasError('the skill map runs only from the command line: ./skill-atlas scan <input> --map')));
+  try {
+    return json(response, 200, await mapSkills(skills.map(({ id, name, description }) => ({ id, name, description })), ask));
+  } catch (error) {
+    if (error instanceof AtlasError) return json(response, 502, { error: error.message });
+    throw error;
+  }
+}
 
 /**
  * An owner scan takes minutes for a large organization: its progress, one JSON line each time, then the result or

@@ -1,0 +1,1 @@
+{"groups":[{"name":"Build","skills":["repo:.claude/skills/build-tools-bump-gradle-api/SKILL.md","repo:.agents/skills/mps-tests/SKILL.md"]},{"name":"Git","skills":["repo:.claude/skills/commits/SKILL.md"]}]}

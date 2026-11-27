@@ -1,11 +1,12 @@
 // Runs the commands the way the CLI does, with GitHub answering from EXAMPLE below.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from '../src/commands.ts';
 import { openGitHub, parseGitHubUrl, type GitHubOptions } from '../src/core/github.ts';
+import type { AskClaude } from '../src/core/map.ts';
 import { scanOwner, type Progress } from '../src/core/owner.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
 import { openDirectory } from '../src/local.ts';
@@ -59,12 +60,13 @@ export function contextFor(github: GitHubOptions) {
   };
 }
 
-/** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE, or as given. */
-export async function atlas(args: string[], github: GitHubOptions = { fetch: replay(EXAMPLE), token: 'test' }) {
+/** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE, or as given; `askClaude` for the skill map. */
+export async function atlas(args: string[], github: GitHubOptions = { fetch: replay(EXAMPLE), token: 'test' }, { askClaude }: { askClaude?: AskClaude } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const code = await run(args, {
     ...contextFor(github),
+    askClaude,
     print: (text) => stdout.push(text),
     error: (text) => stderr.push(text),
   });
@@ -166,3 +168,19 @@ export function repository(t: TestContext, files: Record<string, string> = SKILL
   }
   return { root, url: pathToFileURL(root).href };
 }
+
+/** A recorded answer of `claude -p` for the skill map, in tests/recorded/. */
+export const RECORDED = (name: string) => fileURLToPath(new URL(`./recorded/${name}.txt`, import.meta.url));
+
+/** Claude, replayed: answers with the recorded answer `name`, and keeps each prompt it was given. */
+export function replayClaude(name: string) {
+  const prompts: string[] = [];
+  const ask: AskClaude = async (prompt) => {
+    prompts.push(prompt);
+    return readFileSync(RECORDED(name), 'utf8');
+  };
+  return Object.assign(ask, { prompts });
+}
+
+/** The directory of the fake `claude` (tests/fake-claude), to put first on the PATH. */
+export const FAKE_CLAUDE = fileURLToPath(new URL('./fake-claude', import.meta.url));

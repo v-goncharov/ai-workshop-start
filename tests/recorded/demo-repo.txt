@@ -1,0 +1,11 @@
+```json
+{
+  "groups": [
+    { "name": "Testing & CI", "skills": ["repo:.agents/skills/run-tests/SKILL.md", "repo:.claude/skills/flaky-test-triage/SKILL.md", "repo:.github/skills/ci-pipeline/SKILL.md"] },
+    { "name": "Gradle & Dependencies", "skills": ["repo:.claude/skills/bump-gradle-wrapper/SKILL.md", "repo:.github/skills/dependency-update/SKILL.md"] },
+    { "name": "Kotlin Code", "skills": ["repo:.agents/skills/kotlin-style/SKILL.md", "repo:.agents/skills/migrate-to-kotlin/SKILL.md"] },
+    { "name": "Docs & Releases", "skills": ["repo:.agents/skills/api-docs/SKILL.md", "repo:.claude/skills/release-notes/SKILL.md", "repo:.claude/skills/commit-messages/SKILL.md"] },
+    { "name": "Other", "skills": ["repo:.github/skills/security-review/SKILL.md"] }
+  ]
+}
+```

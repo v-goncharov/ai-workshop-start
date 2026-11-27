@@ -4,6 +4,7 @@ import { AtlasError } from './core/errors.ts';
 import { SKILL_ROOTS } from './core/find.ts';
 import { parseGitHubOwner } from './core/github.ts';
 import { filterWords, matchesFilter } from './core/filter.js';
+import { mapSkills, type AskClaude } from './core/map.ts';
 import { firstSentence, skillLink, type Repository, type Skill } from './core/model.ts';
 import type { OwnerResult, Progress } from './core/owner.ts';
 import { scan, type Source } from './core/scan.ts';
@@ -16,17 +17,20 @@ export type Context = {
   print(text: string): void;
   /** Errors and warnings. */
   error(text: string): void;
+  /** Asks Claude, for the skill map; Node only. */
+  askClaude?: AskClaude;
   /** Starts the web view on the port (0: any free one) and returns its address; Node only. */
   serve?(port: number): Promise<string>;
 };
 
 const usage = `Usage: skill-atlas <command>
 
-  scan <GitHub URL | directory> [--filter "<words>"]
+  scan <GitHub URL | directory> [--filter "<words>"] [--map]
                                   find every SKILL.md in a repository and print it;
                                   https://github.com/<owner>: in every repository of an organization or user;
                                   --filter: only the skills with every word in the name,
-                                  description or path
+                                  description or path;
+                                  --map: grouped by what they are about, by Claude (claude -p)
   serve [--port <n>]              open the web view at http://127.0.0.1:<n> (4400 by default)
   help                            show this help`;
 
@@ -47,21 +51,95 @@ export async function run(args: string[], context: Context): Promise<number> {
 }
 
 async function scanCommand(args: string[], context: Context) {
-  const usage = 'Usage: skill-atlas scan <GitHub URL | directory> [--filter "<words>"]';
+  const usage = 'Usage: skill-atlas scan <GitHub URL | directory> [--filter "<words>"] [--map]';
   const inputs: string[] = [];
   let filter: string | undefined;
+  let map = false;
   for (let i = 0; i < args.length; i++) {
-    if (args[i] !== '--filter') inputs.push(args[i]);
+    if (args[i] === '--map') {
+      if (map) throw new AtlasError(usage);
+      map = true;
+    } else if (args[i] !== '--filter') inputs.push(args[i]);
     else if (filter !== undefined || i + 1 === args.length) throw new AtlasError(usage);
     else filter = args[++i];
   }
   if (inputs.length !== 1) throw new AtlasError(usage);
   const words = filterWords(filter ?? '');
-  if (parseGitHubOwner(inputs[0]) && context.scanOwner) return printOwner(await context.scanOwner(inputs[0]), words, context);
+  if (parseGitHubOwner(inputs[0]) && context.scanOwner) {
+    const result = await context.scanOwner(inputs[0]);
+    const mapped = map && (await mapOwner(result, words, context));
+    if (mapped !== true) printOwner(result, words, context);
+    for (const warning of result.warnings) context.error(`warning: ${warning}`);
+    if (typeof mapped === 'string') context.error(`warning: no skill map: ${mapped}`);
+    return;
+  }
   const result = await scan(await context.open(inputs[0]));
-  if (words.length === 0) printRepository(result.repository, result.skills, context);
-  else printFiltered(result.repository, result.skills, words, context);
+  const mapped = map && (await mapRepository(result.repository, result.skills, words, context));
+  if (mapped !== true) {
+    if (words.length === 0) printRepository(result.repository, result.skills, context);
+    else printFiltered(result.repository, result.skills, words, context);
+  }
   for (const warning of result.warnings) context.error(`warning: ${warning}`);
+  if (typeof mapped === 'string') context.error(`warning: no skill map: ${mapped}`);
+}
+
+/** The skills with their repository, in the CLI's order. */
+type Listed = { repository: Repository; skill: Skill };
+
+/**
+ * The skills grouped by Claude (spec/map.md): the groups, and how many skills match; false when there is nothing to map
+ * (no skills, or none matching), so the output is as without --map; or why Claude failed, for a warning.
+ */
+async function grouped(listed: Listed[], words: string[], context: Context): Promise<{ groups: { name: string; skills: Listed[] }[]; shown: number } | false | string> {
+  const shown = listed.filter(({ skill }) => matchesFilter(skill, words)).length;
+  if (shown === 0) return false;
+  const ask = context.askClaude ?? (() => Promise.reject(new AtlasError('the skill map runs only from the command line: ./skill-atlas scan <input> --map')));
+  let map;
+  try {
+    map = await mapSkills(listed.map(({ skill }) => ({ id: skill.id, name: skill.name, description: skill.description })), ask);
+  } catch (error) {
+    if (error instanceof AtlasError) return error.message;
+    throw error;
+  }
+  const byId = new Map(listed.map((entry) => [entry.skill.id, entry]));
+  return { groups: map.groups.map(({ name, skills }) => ({ name, skills: skills.map((id) => byId.get(id)!) })), shown };
+}
+
+/** `<repo> · N skills in G groups` (or the filtered header), then each group with a match and its skills. */
+async function mapRepository(repository: Repository, skills: Skill[], words: string[], context: Context): Promise<boolean | string> {
+  const map = await grouped(skills.map((skill) => ({ repository, skill })), words, context);
+  if (typeof map !== 'object') return map;
+  context.print(`${repository.id} · ${mapHeader(map, skills.length, words)}`);
+  printGroups(map.groups, words, false, context);
+  return true;
+}
+
+/** The owner's summary, then `N skills in G groups` (or the filtered line), then one map over all its repositories. */
+async function mapOwner(result: OwnerResult, words: string[], context: Context): Promise<boolean | string> {
+  const listed = result.repositories.flatMap(({ repository, skills }) => skills.map((skill) => ({ repository, skill })));
+  const map = await grouped(listed, words, context);
+  if (typeof map !== 'object') return map;
+  context.print(summaryLine(result));
+  context.print(mapHeader(map, listed.length, words));
+  printGroups(map.groups, words, true, context);
+  return true;
+}
+
+function mapHeader(map: { groups: { skills: Listed[] }[]; shown: number }, total: number, words: string[]): string {
+  const groups = plural(map.groups.length, 'group', 'groups');
+  if (words.length === 0) return `${plural(total, 'skill', 'skills')} in ${groups}`;
+  const matching = map.groups.filter(({ skills }) => skills.some(({ skill }) => matchesFilter(skill, words))).length;
+  return `${map.shown} of ${plural(total, 'skill', 'skills')} in ${matching} of ${groups} match "${words.join(' ')}"`;
+}
+
+/** `## <name> · N skills`, counting the matches, then the skills as without --map; for an owner, each after its repository. */
+function printGroups(groups: { name: string; skills: Listed[] }[], words: string[], withRepository: boolean, context: Context) {
+  for (const group of groups) {
+    const shown = group.skills.filter(({ skill }) => matchesFilter(skill, words));
+    if (shown.length === 0) continue;
+    context.print(`## ${group.name} · ${plural(shown.length, 'skill', 'skills')}`);
+    for (const { repository, skill } of shown) printSkills(repository, [skill], context, withRepository ? `${repository.id}: ` : '');
+  }
 }
 
 export const DEFAULT_PORT = 4400;
@@ -84,12 +162,7 @@ async function serveCommand(args: string[], context: Context) {
  */
 function printOwner(result: OwnerResult, words: string[], context: Context) {
   const skills = result.repositories.reduce((count, { skills }) => count + skills.length, 0);
-  const { forks, archived, empty } = result.skipped;
-  const skipped = [forks && plural(forks, 'fork', 'forks'), archived && `${archived} archived`, empty && `${empty} empty`].filter(Boolean);
-  context.print(
-    `${result.owner.id} · ${plural(skills, 'skill', 'skills')} in ${result.repositories.length} of ${plural(result.scanned, 'repository', 'repositories')}` +
-      (skipped.length > 0 ? ` (${skipped.join(', ').replace(/, ([^,]*)$/, ' and $1')} skipped)` : ''),
-  );
+  context.print(summaryLine(result));
   if (skills === 0) {
     const roots = SKILL_ROOTS.join(', ').replace(/, ([^,]*)$/, ' or $1');
     context.print(`Skills count only as <root>/<name>/SKILL.md under ${roots}`);
@@ -101,7 +174,17 @@ function printOwner(result: OwnerResult, words: string[], context: Context) {
     if (matching.length === 0) context.print(`No skills match "${words.join(' ')}"`);
     for (const { repository, skills } of matching) printFiltered(repository, skills, words, context);
   }
-  for (const warning of result.warnings) context.error(`warning: ${warning}`);
+}
+
+/** `<owner> · N skills in R of S repositories (… skipped)`. */
+function summaryLine(result: OwnerResult): string {
+  const skills = result.repositories.reduce((count, { skills }) => count + skills.length, 0);
+  const { forks, archived, empty } = result.skipped;
+  const skipped = [forks && plural(forks, 'fork', 'forks'), archived && `${archived} archived`, empty && `${empty} empty`].filter(Boolean);
+  return (
+    `${result.owner.id} · ${plural(skills, 'skill', 'skills')} in ${result.repositories.length} of ${plural(result.scanned, 'repository', 'repositories')}` +
+    (skipped.length > 0 ? ` (${skipped.join(', ').replace(/, ([^,]*)$/, ' and $1')} skipped)` : '')
+  );
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -123,9 +206,9 @@ function printRepository(repository: Repository, skills: Skill[], context: Conte
   printSkills(repository, skills, context);
 }
 
-function printSkills(repository: Repository, skills: Skill[], { print }: Context) {
+function printSkills(repository: Repository, skills: Skill[], { print }: Context, prefix = '') {
   for (const skill of skills) {
-    print(skill.description ? `${skill.name} — ${firstSentence(skill.description)}` : skill.name);
+    print(prefix + (skill.description ? `${skill.name} — ${firstSentence(skill.description)}` : skill.name));
     print(`  ${skillLink(repository, skill)}`);
     if (skill.copies.length > 0) print(`  also in ${skill.copies.join(', ')}`);
   }
