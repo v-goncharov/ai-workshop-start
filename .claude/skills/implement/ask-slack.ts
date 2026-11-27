@@ -4,7 +4,8 @@
 //   node .claude/skills/implement/ask-slack.ts --thread <ts> "<text>" follow up in an existing thread
 //   node .claude/skills/implement/ask-slack.ts --thread <ts>          only wait, post nothing
 //
-// Options: --channel <name> (default very-secrect-alpaca-channel), --wait <seconds> (default 3600),
+// Options: --channel <name or ID> (default very-secrect-alpaca-channel; an ID like C0123ABCD skips the
+// conversations.list lookup and its channels:read scope), --wait <seconds> (default 3600),
 // --poll <seconds> (default 60). Needs SLACK_BOT_TOKEN. SLACK_API_URL overrides https://slack.com/api (tests).
 //
 // Prints `thread: <ts>` first, then each human reply as `answer from <user>: <text>`.
@@ -19,8 +20,14 @@ const opt = (name: string, fallback: string): string => {
   return value;
 };
 const channelName = opt('channel', 'very-secrect-alpaca-channel');
-const waitSeconds = Number(opt('wait', '3600'));
-const pollSeconds = Number(opt('poll', '60'));
+const seconds = (name: string, fallback: string): number => {
+  const raw = opt(name, fallback);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) fail(`--${name} needs a number of seconds, got '${raw}'`);
+  return n;
+};
+const waitSeconds = seconds('wait', '3600');
+const pollSeconds = seconds('poll', '60');
 let thread = opt('thread', '');
 const text = args.join(' ').trim();
 
@@ -73,12 +80,16 @@ async function findChannel(name: string): Promise<string> {
   fail(`channel #${name} not found, or the bot is not in it`);
 }
 
-const channel = await findChannel(channelName);
-const me = (await slack('auth.test', {})).user_id;
+// Before the wait a transient error is not retried (a retried post could post twice): report it and exit 1.
+const once = <T>(p: Promise<T>): Promise<T> =>
+  p.catch((e) => (e instanceof Transient ? fail(e.message) : Promise.reject(e)));
+
+const channel = /^[CG][A-Z0-9]{6,}$/.test(channelName) ? channelName : await once(findChannel(channelName));
+const me = (await once(slack('auth.test', {}))).user_id;
 
 let since = '0';
 if (text) {
-  const posted = await slack('chat.postMessage', { channel, text, ...(thread ? { thread_ts: thread } : {}) }, true);
+  const posted = await once(slack('chat.postMessage', { channel, text, ...(thread ? { thread_ts: thread } : {}) }, true));
   thread ||= posted.ts;
   since = posted.ts;
 } else {

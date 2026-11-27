@@ -7,22 +7,25 @@ import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('../.claude/skills/implement/ask-slack.ts', import.meta.url));
 
-function fakeSlack(onReplies: (call: number, ts: string) => { status?: number; body: any }) {
-  const posts: any[] = []; let calls = 0;
+type Reply = { status?: number; body: any };
+function fakeSlack(onReplies: (call: number, ts: string) => Reply, override: Record<string, Reply> = {}) {
+  const posts: any[] = []; const methods: string[] = []; let calls = 0;
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const c of req) raw += c;
     const url = new URL(req.url!, 'http://x'); const m = url.pathname.slice(1);
     assert.equal(req.headers.authorization, 'Bearer xoxb-test');
+    methods.push(m);
     let status = 200, body: any;
-    if (m === 'conversations.list') body = { ok: true, channels: [{ id: 'C1', name: 'very-secrect-alpaca-channel' }] };
+    if (override[m]) ({ status = 200, body } = override[m]);
+    else if (m === 'conversations.list') body = { ok: true, channels: [{ id: 'C1', name: 'very-secrect-alpaca-channel' }] };
     else if (m === 'auth.test') body = { ok: true, user_id: 'UBOT' };
     else if (m === 'chat.postMessage') { const p = JSON.parse(raw); posts.push(p); body = { ok: true, ts: p.thread_ts ? '200.0' : '100.0' }; }
-    else if (m === 'conversations.replies') { assert.equal(url.searchParams.get('channel'), 'C1'); ({ status = 200, body } = onReplies(++calls, url.searchParams.get('ts')!)); }
+    else if (m === 'conversations.replies') { assert.equal(url.searchParams.get('channel'), posts[0]?.channel ?? 'C1'); ({ status = 200, body } = onReplies(++calls, url.searchParams.get('ts')!)); }
     else body = { ok: false, error: 'unknown_method' };
     res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body));
   });
-  return new Promise<{ url: string; posts: any[]; close: () => void }>((r) =>
-    server.listen(0, () => r({ url: `http://127.0.0.1:${(server.address() as any).port}`, posts, close: () => server.close() })));
+  return new Promise<{ url: string; posts: any[]; methods: string[]; close: () => void }>((r) =>
+    server.listen(0, () => r({ url: `http://127.0.0.1:${(server.address() as any).port}`, posts, methods, close: () => server.close() })));
 }
 
 function run(api: string, args: string[]) {
@@ -69,4 +72,35 @@ test('exits 1 on a real Slack error', async () => {
   const s = await fakeSlack(() => ({ body: { ok: false, error: 'not_in_channel' } }));
   const r = await run(s.url, ['--poll', '0.1', 'Q']); s.close();
   assert.equal(r.code, 1); assert.match(r.err, /conversations.replies: not_in_channel/);
+});
+
+test('rejects a --wait or --poll that is not a positive number of seconds, before calling Slack', async () => {
+  const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent] } }));
+  for (const args of [['--wait', '1h'], ['--wait', 'abc'], ['--wait', '0'], ['--poll', 'abc'], ['--poll', '-1']]) {
+    const r = await run(s.url, [...args, 'Q']);
+    assert.equal(r.code, 1, args.join(' '));
+    assert.match(r.err, new RegExp(`^ask-slack: ${args[0]} needs a number of seconds, got '${args[1]}'\n$`));
+  }
+  s.close();
+  assert.deepEqual(s.methods, []);
+});
+
+test('a transient error before the wait exits 1 with an ask-slack message, not a stack trace', async () => {
+  for (const method of ['conversations.list', 'auth.test', 'chat.postMessage']) {
+    const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent] } }), { [method]: { status: 503, body: {} } });
+    const r = await run(s.url, ['--poll', '0.1', 'Q']); s.close();
+    assert.equal(r.code, 1, method);
+    assert.equal(r.err, `ask-slack: ${method}: HTTP 503\n`);
+    assert.equal(s.methods.filter((m) => m === 'chat.postMessage').length, method === 'chat.postMessage' ? 1 : 0);
+  }
+});
+
+test('a channel ID skips the conversations.list lookup', async () => {
+  const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent, { ts: '101.0', user: 'UHUMAN', text: 'yes' }] } }),
+    { 'conversations.list': { body: { ok: false, error: 'missing_scope' } } });
+  const r = await run(s.url, ['--channel', 'C1ABCDEFG', '--poll', '0.1', 'Q']); s.close();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /answer from <@UHUMAN>: yes/);
+  assert.ok(!s.methods.includes('conversations.list'));
+  assert.deepEqual(s.posts, [{ channel: 'C1ABCDEFG', text: 'Q' }]);
 });
