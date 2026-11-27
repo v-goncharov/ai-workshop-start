@@ -60,7 +60,12 @@ async function slack(method: string, params: Record<string, string | boolean>, p
     fail(`${method}: ${(e as Error).message}`);
   }
   if (!res.ok) fail(`${method}: HTTP ${res.status}`);
-  const body = await res.json();
+  let body: any;
+  try {
+    body = await res.json();
+  } catch {
+    fail(`${method}: the response is not JSON`);
+  }
   if (!body.ok) fail(`${method}: ${body.error}${body.needed ? ` (needs ${body.needed})` : ''}`);
   return body;
 }
@@ -73,9 +78,15 @@ function gh(...ghArgs: string[]): any {
   }
 }
 
+// A date alone is midnight UTC; a time needs Z or an offset, or it would be read in this machine's zone.
 function parseTime(raw: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(T.*(Z|[+-]\d{2}:?\d{2}))?$/.exec(raw);
   const d = new Date(raw);
-  if (!/^\d{4}-\d{2}-\d{2}/.test(raw) || Number.isNaN(d.getTime())) fail(`not an ISO 8601 time: '${raw}'`);
+  if (!m || Number.isNaN(d.getTime())) fail(`not an ISO 8601 date, or time with Z or an offset: '${raw}'`);
+  // V8 rolls 2026-02-30 over to March 2; a real date reads back the same.
+  const [y, mo, day] = [m[1], m[2], m[3]].map(Number);
+  const cal = new Date(Date.UTC(y, mo - 1, day));
+  if (cal.getUTCFullYear() !== y || cal.getUTCMonth() !== mo - 1 || cal.getUTCDate() !== day) fail(`not a date: '${raw}'`);
   if (d.getTime() > Date.now()) fail(`'${raw}' is in the future`);
   return d;
 }
@@ -89,16 +100,18 @@ const iso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const when = (d: Date): string =>
   `<!date^${Math.floor(d.getTime() / 1000)}^{date_short_pretty} {time}|${iso(d)}>`;
 
-// The first line of a status update is `*Status update* <!date^…> → <!date^…>`: the window end is the second date.
+// The first line of a status update, as draft writes it: the window end is the second date. post requires it
+// unchanged, so the next run can read the end back.
+const STATUS_LINE = new RegExp(`^\\*${MARKER}\\* <!date\\^(\\d+)\\^[^>]*> → <!date\\^(\\d+)\\^[^>]*>$`);
 async function defaultSince(): Promise<Date> {
   const me = (await slack('auth.test', {})).user_id;
   let cursor = '';
   for (let page = 0; page < 10; page++) {
     const body = await slack('conversations.history', { channel, limit: '200', ...(cursor ? { cursor } : {}) });
     for (const m of body.messages) {
-      if (m.user !== me || !m.text.startsWith(`*${MARKER}*`)) continue;
-      const dates = [...m.text.split('\n')[0].matchAll(/<!date\^(\d+)\^/g)];
-      if (dates.length >= 2) return new Date(Number(dates[1][1]) * 1000);
+      if (m.user !== me) continue;
+      const line = STATUS_LINE.exec((m.text ?? '').split('\n')[0]);
+      if (line) return new Date(Number(line[2]) * 1000);
     }
     cursor = body.response_metadata?.next_cursor ?? '';
     if (!cursor) break;
@@ -151,7 +164,7 @@ if (command === 'since') {
   for await (const chunk of process.stdin) text += chunk;
   text = text.trim();
   if (!text) fail('nothing to post: the message on stdin is empty');
-  if (!text.startsWith(`*${MARKER}*`)) fail(`the message must start with the draft's first line (*${MARKER}* <from> → <to>)`);
+  if (!STATUS_LINE.test(text.split('\n')[0])) fail(`the message must start with the draft's first line, unchanged (*${MARKER}* <!date^…> → <!date^…>)`);
   const posted = await slack('chat.postMessage', { channel, text, unfurl_links: false, unfurl_media: false }, true);
   console.log(`posted: ${posted.ts}`);
 } else {

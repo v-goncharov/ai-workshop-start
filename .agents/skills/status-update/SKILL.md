@@ -1,6 +1,6 @@
 ---
 name: status-update
-description: Post a status update to Slack — the PRs merged and the issues resolved in this repository since a given time and date — in the private channel #very-secrect-alpaca-channel, with SLACK_BOT_TOKEN. Use when asked for a status update, a changelog or "what got done since …", and from the scheduled status-update automation.
+description: Post a status update to Slack — the PRs merged and the issues resolved in this repository since a given time and date — in the private Slack channel `#very-secrect-alpaca-channel`, with `SLACK_BOT_TOKEN`. Use when asked for a status update, a changelog or "what got done since …", and from the scheduled status-update automation.
 ---
 
 # Status update

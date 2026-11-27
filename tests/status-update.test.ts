@@ -47,6 +47,7 @@ function fakeSlack(history: any[] = []) {
     else body = { ok: false, error: 'unknown_method' };
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body));
   });
+  server.unref(); // a failed assertion skips close(); don't let the server keep the test process alive
   return new Promise<{ url: string; posts: any[]; methods: string[]; close: () => void }>((r) =>
     server.listen(0, () => r({ url: `http://127.0.0.1:${(server.address() as any).port}`, posts, methods, close: () => server.close() })));
 }
@@ -132,7 +133,9 @@ test('an empty window says so', async () => {
 test('without a start, it continues from the end of the last status update this bot posted', async () => {
   const s = await fakeSlack([
     { ts: '3.0', user: 'UHUMAN', text: '*Status update* <!date^1^x|a> → <!date^2^x|b>' },
+    { ts: '2.5', user: 'UBOT', subtype: 'bot_message', files: [{}] },
     { ts: '2.0', user: 'UBOT', text: 'Implementing the skill map' },
+    { ts: '1.5', user: 'UBOT', text: '*Status update* for this week' },
     { ts: '1.0', user: 'UBOT', text: '*Status update* <!date^1795680000^x|a> → <!date^1795690000^x|b>\nSummary' },
   ]);
   const r = await run(s.url, ['since']); s.close();
@@ -151,7 +154,15 @@ test('without a start or an earlier update, it covers the last 24 hours', async 
 test('rejects a start that is not ISO 8601 or is in the future, before calling gh or Slack', async () => {
   fakeGh(prs, issues);
   const s = await fakeSlack();
-  for (const [arg, msg] of [['yesterday', /not an ISO 8601 time/], ['2999-01-01', /in the future/]] as const) {
+  for (const [arg, msg] of [
+    ['yesterday', /not an ISO 8601 date/],
+    ['1795683600', /not an ISO 8601 date/],
+    ['2026-11-26T09:00:00Zjunk', /not an ISO 8601 date/],
+    ['2026-11-26T09:00', /not an ISO 8601 date, or time with Z or an offset/],
+    ['2026-02-30', /not a date: '2026-02-30'/],
+    ['2026-02-29T10:00Z', /not a date/],
+    ['2999-01-01', /in the future/],
+  ] as const) {
     const r = await run(s.url, ['draft', arg]);
     assert.equal(r.code, 1); assert.match(r.err, msg);
   }
@@ -174,6 +185,8 @@ test('refuses to post an empty message, one without the status line, or without 
   for (const [args, stdin, msg] of [
     [['post', '-'], '  \n', /empty/],
     [['post', '-'], 'Hello', /must start with the draft's first line/],
+    [['post', '-'], '*Status update* for this week\n• a PR', /must start with the draft's first line, unchanged/],
+    [['post', '-'], '*Status update* <!date^1^x|a> → <!date^2^x|b> — a good week\n', /must start with the draft's first line, unchanged/],
     [['post', 'Hello'], '', /reads the message from stdin/],
   ] as const) {
     const r = await run(s.url, [...args], stdin);
@@ -183,6 +196,17 @@ test('refuses to post an empty message, one without the status line, or without 
   assert.deepEqual(s.posts, []);
 });
 
+test('accepts a date, and a time with an offset, converted to UTC', async () => {
+  fakeGh([], []);
+  const s = await fakeSlack();
+  for (const [arg, start] of [['2026-11-26', '2026-11-26T00:00:00Z'], ['2026-11-26T10:00+01:00', '2026-11-26T09:00:00Z'], ['2024-02-29', '2024-02-29T00:00:00Z']]) {
+    const r = await run(s.url, ['draft', arg], '', { TZ: 'Asia/Tokyo' });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`^\\*Status update\\* <!date\\^\\d+\\^[^|]+\\|${start}>`));
+  }
+  s.close();
+});
+
 test('reports a missing token and a Slack error, and exits 1', async () => {
   const s = await fakeSlack();
   const noToken = await run(s.url, ['since'], '', { SLACK_BOT_TOKEN: '' });
@@ -190,4 +214,9 @@ test('reports a missing token and a Slack error, and exits 1', async () => {
   s.close();
   const down = await run('http://127.0.0.1:1', ['since']);
   assert.equal(down.code, 1); assert.match(down.err, /^status-update: auth\.test: /);
+  const html = http.createServer((_, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html>'); });
+  html.unref();
+  await new Promise<void>((ok) => html.listen(0, ok));
+  const bad = await run(`http://127.0.0.1:${(html.address() as any).port}`, ['since']); html.closeAllConnections(); html.close();
+  assert.equal(bad.code, 1); assert.equal(bad.err, 'status-update: auth.test: the response is not JSON\n');
 });
