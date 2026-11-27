@@ -9,7 +9,9 @@
 // <since> is an ISO 8601 time (2026-11-26T09:00:00Z, 2026-11-26, 2026-11-26T10:00+01:00). Without it,
 // the start is the end of the window of the last status update this bot posted in the channel (its
 // first line carries it), else 24 hours ago. So a scheduled run reports exactly what came in since the
-// last one, whatever the schedule.
+// last one, whatever the schedule. The window ends 2 minutes before now, in whole seconds: GitHub's
+// search index lags behind a merge, so anything newer waits for the next run, and the end the next
+// run reads back from the first line is exactly the end this one filtered by.
 //
 // Options: --channel <ID> (default C0CM9AWDGVB, #very-secrect-alpaca-channel; an ID, since the token
 // has no channels:read scope), --repo <owner/name> (default: the current repository, as gh sees it).
@@ -78,6 +80,10 @@ function parseTime(raw: string): Date {
   return d;
 }
 
+// Whole seconds, so `< until` here and `>= since` in the next run (read back in seconds) split exactly.
+const SETTLE_MS = 120e3;
+const windowEnd = (): Date => new Date(Math.floor((Date.now() - SETTLE_MS) / 1000) * 1000);
+
 const iso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 // Slack shows <!date^…> in each reader's own time zone; the text after | is the fallback.
 const when = (d: Date): string =>
@@ -97,7 +103,7 @@ async function defaultSince(): Promise<Date> {
     cursor = body.response_metadata?.next_cursor ?? '';
     if (!cursor) break;
   }
-  return new Date(Date.now() - 24 * 3600 * 1000);
+  return new Date(Math.floor((Date.now() - 24 * 3600 * 1000) / 1000) * 1000);
 }
 
 const escape = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -136,7 +142,9 @@ if (command === 'since') {
   console.log(iso(await defaultSince()));
 } else if (command === 'draft') {
   const since = arg ? parseTime(arg) : await defaultSince();
-  console.log(draft(since, new Date()));
+  const until = windowEnd();
+  if (since > until) fail(`'${iso(since)}' is less than 2 minutes ago: the window ends at ${iso(until)}, to let GitHub's search catch up`);
+  console.log(draft(since, until));
 } else if (command === 'post') {
   if (arg !== '-') fail("post reads the message from stdin: post - <<'EOF'");
   let text = '';

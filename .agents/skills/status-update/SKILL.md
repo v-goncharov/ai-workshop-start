@@ -5,7 +5,7 @@ description: Post a status update to Slack — the PRs merged and the issues res
 
 # Status update
 
-Post one Slack message: what was merged and resolved in this repository between a start time and now. Read-only on the repository: no branch, no commit, no PR.
+Post one Slack message: what was merged and resolved in this repository between a start time and two minutes ago (GitHub's search lags behind a merge; anything newer goes into the next update). Read-only on the repository: no branch, no commit, no PR.
 
 ## 1. The start
 - The user gave a time or date ("since Monday 9:00", "since 2026-11-20"): turn it into ISO 8601 with an offset or `Z`, in the user's time zone if they named one, else UTC. A bare date means 00:00 that day.

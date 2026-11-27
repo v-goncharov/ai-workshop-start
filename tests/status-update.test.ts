@@ -84,6 +84,43 @@ test('the draft lists merged PRs and completed issues in the window, oldest firs
   assert.match(calls, /issue list --state closed --search closed:>=2026-11-26 reason:completed /);
 });
 
+test('the window ends 2 minutes ago in whole seconds: newer items wait, an item at the start second is in', async () => {
+  const sec = (ms: number) => Math.floor(ms / 1000) * 1000;
+  const since = new Date(sec(Date.now() - 3600e3)); // the end of the previous update
+  const at = (ms: number) => new Date(ms).toISOString();
+  fakeGh([
+    { number: 7, title: 'At the previous end', url: 'https://gh/pr/7', mergedAt: at(since.getTime()), author: author('ann'), closingIssuesReferences: [] },
+    { number: 8, title: 'Just before it', url: 'https://gh/pr/8', mergedAt: at(since.getTime() - 1000), author: author('ann'), closingIssuesReferences: [] },
+    { number: 9, title: 'Too fresh', url: 'https://gh/pr/9', mergedAt: at(Date.now() - 30e3), author: author('ann'), closingIssuesReferences: [] },
+  ], [
+    { number: 10, title: 'Too fresh', url: 'https://gh/issues/10', closedAt: at(Date.now() - 60e3), stateReason: 'COMPLETED' },
+  ]);
+  const s = await fakeSlack();
+  const before = Date.now();
+  const r = await run(s.url, ['draft', since.toISOString()]); s.close();
+  assert.equal(r.code, 0, r.err);
+  const lines = r.out.trimEnd().split('\n');
+  const end = [...lines[0].matchAll(/<!date\^(\d+)\^[^|]+\|([^>]+)>/g)][1];
+  const endMs = Number(end[1]) * 1000;
+  assert.equal(new Date(end[2]).getTime(), endMs, 'the fallback text and the timestamp agree, in whole seconds');
+  assert.ok(endMs <= before - 120e3 + 1000 && endMs > before - 130e3, lines[0]);
+  assert.deepEqual(lines.slice(1), [
+    '',
+    '*Merged PRs (1)*',
+    '• <https://gh/pr/7|#7> At the previous end (ann)',
+    '',
+    '*Resolved issues (0)*',
+    '• none',
+  ]);
+});
+
+test('rejects a start less than 2 minutes ago, after the window end', async () => {
+  fakeGh([], []);
+  const s = await fakeSlack();
+  const r = await run(s.url, ['draft', new Date(Date.now() - 30e3).toISOString()]); s.close();
+  assert.equal(r.code, 1); assert.match(r.err, /less than 2 minutes ago/);
+});
+
 test('an empty window says so', async () => {
   fakeGh([], []);
   const s = await fakeSlack();
