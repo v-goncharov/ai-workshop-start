@@ -11,7 +11,11 @@ Take the issue from understanding to an open pull request, in five phases, in or
 - Read the issue with all its comments and linked issues. Issues are disabled on this repository, so the issue may be a URL elsewhere or pasted text; if there is none, ask for it.
 - Read [AGENTS.md](../../../AGENTS.md), then every file in [spec/](../../../spec/): it says what the tool does today. Then read the code the issue touches and enough code around it to know where the change belongs: `src/core` (scan, GitHub, parsing), `src/commands.ts` and `src/cli.ts` (CLI), `src/web` (web view).
 - Write the design down as a change to `spec/`, in the spec's own terse style: the new behavior, each case and edge case, every error and its message. This is the contract for phases 2 and 3.
-- Stop and ask the user when the issue is ambiguous, contradicts the spec, or has more than one sensible design. Give the options and your recommendation. Don't guess on behavior a user will see.
+- When the issue is ambiguous, contradicts the spec, or has more than one sensible design, ask in Slack, in `#very-secrect-alpaca-channel`, and wait up to an hour for an answer. Don't guess on behavior a user will see.
+  - Ask everything in one message: a link to the issue, each question, its options and your recommendation.
+  - Post it and wait with `node .claude/skills/implement/ask-slack.ts "<message>"`. Run it in the background (it waits up to 3600 s, longer than a foreground command may run) and wait for it to finish; don't poll Slack yourself. It prints `thread: <ts>`, then the replies.
+  - Exit 0: read the answer and go on. If it leaves something open, follow up in the same thread with `--thread <ts> "<message>"`; each follow-up waits up to another hour.
+  - Exit 2, no answer within the hour: stop. Don't guess and don't open a PR. Report the unanswered questions and the Slack thread to the user. Exit 1: Slack failed; report the error.
 
 ## 2. Tests
 - One integration test for every case you added or changed in the spec, named after that case, in the matching `tests/*.test.ts` (`scan`, `edge-cases`, `web`), or a new file if none fits. Follow the existing tests: run the real CLI or server, use `tests/helpers.ts`, and use temporary repositories or replayed GitHub recordings, so `npm test` stays offline.
