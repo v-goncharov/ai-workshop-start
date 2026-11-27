@@ -1,4 +1,4 @@
-When a skill tells the agent to run a long command in the background, give the exact Bash `timeout` (above the command's own wait) and say to keep the turn open until it exits.
+When a skill tells the agent to wait on a long background command, give every timer in the chain: the Bash `timeout` (above the command's own wait), and for the Monitor that keeps the turn open, `timeout_ms: 1800000` (its cap) plus "re-arm on each expiry until the done marker appears". Have the command write a marker on exit (`; echo "exit: $?" >> out`, with an inner coreutils `timeout` so a hang still writes it), since a background task's exit code can't be seen from a shell.
 
-**Why:** `implement` said to run the hour-long `ask-slack.ts` "in the background" with no timeout; Bash kills background commands at the 30-minute default, and on Air the session ends with the turn, so the wait would be cut off or lost.
-**Source:** https://github.com/v-goncharov/ai-workshop-start/pull/25#discussion_r4717963664
+**Why:** `implement` first said to run the hour-long `ask-slack.ts` "in the background" with no timeout (Bash kills it at 30 min), then to wait with Monitor "in an until-loop on its exit" with no `timeout_ms` (default 5 min) and nothing the loop could check. Either way the turn ends early and on Air the answer is lost.
+**Source:** https://github.com/v-goncharov/ai-workshop-start/pull/25#discussion_r4717963664, https://github.com/v-goncharov/ai-workshop-start/pull/25#discussion_r4718083713
