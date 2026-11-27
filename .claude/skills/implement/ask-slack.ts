@@ -12,10 +12,15 @@
 //
 // Options: --channel <name or ID> (default very-secrect-alpaca-channel; an ID like C0123ABCD skips the
 // conversations.list lookup and its channels:read scope), --wait <seconds> (default 3600),
-// --poll <seconds> (default 60). Needs SLACK_BOT_TOKEN. SLACK_API_URL overrides https://slack.com/api (tests).
+// --poll <seconds> (default 60), --since <ts> (with --thread: count replies after this ts, e.g. the
+// `last:` of the previous run, instead of after the follow-up post or now, so nothing posted in between is
+// missed). Needs SLACK_BOT_TOKEN. SLACK_API_URL overrides https://slack.com/api (tests).
 //
-// Prints `thread: <ts>` first, then each human reply as `answer from <user>: <text>`.
-// Exit 0: answered. Exit 2: no answer within --wait. Exit 1: error.
+// Once the first human reply arrives, it keeps polling until a whole poll interval passes with no new
+// reply (or --wait runs out), so an answer sent as several messages is read in full.
+//
+// Prints `thread: <ts>` first, then each human reply as `answer from <user>: <text>`, then `last: <ts>`
+// of the last reply read. Exit 0: answered. Exit 2: no answer within --wait. Exit 1: error.
 
 const args = process.argv.slice(2);
 const opt = (name: string, fallback: string): string => {
@@ -35,6 +40,9 @@ const seconds = (name: string, fallback: string): number => {
 const waitSeconds = seconds('wait', '3600');
 const pollSeconds = seconds('poll', '60');
 let thread = opt('thread', '');
+const sinceArg = opt('since', '');
+if (sinceArg && !thread) fail('--since needs --thread');
+if (sinceArg && !(Number.isFinite(Number(sinceArg)) && Number(sinceArg) > 0)) fail(`--since needs a Slack ts, got '${sinceArg}'`);
 const fromStdin = args.length === 1 && args[0] === '-';
 let text = args.join(' ').trim();
 
@@ -104,7 +112,9 @@ let since = '0';
 if (text) {
   const posted = await once(slack('chat.postMessage', { channel, text, ...(thread ? { thread_ts: thread } : {}) }, true));
   thread ||= posted.ts;
-  since = posted.ts;
+  since = sinceArg || posted.ts;
+} else if (sinceArg) {
+  since = sinceArg;
 } else {
   // Only waiting: count replies that arrive from now on.
   since = String(Date.now() / 1000);
@@ -112,18 +122,24 @@ if (text) {
 console.log(`thread: ${thread}`);
 
 const deadline = Date.now() + waitSeconds * 1000;
+// Human replies found so far. Once there are some, stop at the first poll that finds no new one.
+let answers: any[] = [];
 while (true) {
-  let messages: any[] = [];
+  let settled = false;
   try {
-    ({ messages } = await slack('conversations.replies', { channel, ts: thread, oldest: since, limit: '200' }));
+    const { messages } = await slack('conversations.replies', { channel, ts: thread, oldest: since, limit: '200' });
+    const found = messages.filter((m: any) =>
+      Number(m.ts) > Number(since) && m.user && m.user !== me && !m.bot_id && m.ts !== thread)
+      .sort((a: any, b: any) => Number(a.ts) - Number(b.ts));
+    settled = answers.length > 0 && found.length <= answers.length;
+    if (found.length > answers.length) answers = found;
   } catch (e) {
     if (!(e instanceof Transient)) throw e;
     console.error(`ask-slack: ${e.message}, retrying`); // a blip must not end an hour-long wait
   }
-  const answers = messages.filter((m: any) =>
-    Number(m.ts) > Number(since) && m.user && m.user !== me && !m.bot_id && m.ts !== thread);
-  if (answers.length) {
+  if (answers.length && (settled || Date.now() >= deadline)) {
     for (const m of answers) console.log(`answer from <@${m.user}>: ${m.text}`);
+    console.log(`last: ${answers[answers.length - 1].ts}`);
     process.exit(0);
   }
   if (Date.now() >= deadline) {

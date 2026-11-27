@@ -48,7 +48,7 @@ test('posts the question and exits 0 with the human answer, ignoring bots and su
   const r = await run(s.url, ['--poll', '0.1', '--wait', '10', 'Which option?']); s.close();
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.posts, [{ channel: 'C1', text: 'Which option?' }]);
-  assert.match(r.out, /^thread: 100\.0\nanswer from <@UHUMAN>: use option B\n$/);
+  assert.match(r.out, /^thread: 100\.0\nanswer from <@UHUMAN>: use option B\nlast: 103\.0\n$/);
   assert.match(r.err, /HTTP 429, retrying/);
 });
 
@@ -127,4 +127,49 @@ test('the SKILL.md heredoc form delivers a message with backticks and `$` unchan
   const code = await new Promise((r) => p.on('close', r)); s.close();
   assert.equal(code, 0, err);
   assert.deepEqual(s.posts, [{ channel: 'C1', text: 'Use `spec/` and $PATH here' }]);
+});
+
+test('an answer sent as several messages is read in full: it waits for a poll with no new reply', async () => {
+  const a = { ts: '101.0', user: 'UHUMAN', text: 'Option B.' };
+  const b = { ts: '102.0', user: 'UHUMAN', text: 'but keep the old error message for `--json`' };
+  const s = await fakeSlack((call) => {
+    if (call === 1) return { body: { ok: true, messages: [parent, a] } };
+    if (call === 2) return { status: 503, body: {} }; // a blip while settling neither ends nor shortens the answer
+    return { body: { ok: true, messages: [parent, a, b] } };
+  });
+  const r = await run(s.url, ['--poll', '0.1', '--wait', '10', 'Q']); s.close();
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, 'thread: 100.0\nanswer from <@UHUMAN>: Option B.\n'
+    + 'answer from <@UHUMAN>: but keep the old error message for `--json`\nlast: 102.0\n');
+  assert.ok(s.methods.filter((m) => m === 'conversations.replies').length >= 4);
+});
+
+test('replies still coming in when --wait runs out are printed as the answer', async () => {
+  let n = 0;
+  const s = await fakeSlack(() => {
+    n++; const messages = [parent];
+    for (let i = 1; i <= n; i++) messages.push({ ts: `${100 + i}.0`, user: 'UHUMAN', text: `part ${i}` } as any);
+    return { body: { ok: true, messages } };
+  });
+  const r = await run(s.url, ['--poll', '0.1', '--wait', '0.5', 'Q']); s.close();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /answer from <@UHUMAN>: part 1\n/);
+  assert.match(r.out, /last: \d+\.0\n$/);
+});
+
+test('--since makes a follow-up count replies from the last one read, not from its own post', async () => {
+  const s = await fakeSlack(() => ({ body: { ok: true, messages: [parent,
+    { ts: '103.0', user: 'UHUMAN', text: 'already read' },
+    { ts: '150.0', user: 'UHUMAN', text: 'posted before the follow-up' },
+    { ts: '200.0', user: 'UBOT', bot_id: 'B', text: 'And this?' }] } }));
+  const r = await run(s.url, ['--thread', '100.0', '--since', '103.0', '--poll', '0.1', '-'], 'And this?');
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.posts, [{ channel: 'C1', text: 'And this?', thread_ts: '100.0' }]);
+  assert.equal(r.out, 'thread: 100.0\nanswer from <@UHUMAN>: posted before the follow-up\nlast: 150.0\n');
+  for (const [args, msg] of [[['--since', '103.0', 'Q'], '--since needs --thread'],
+    [['--thread', '100.0', '--since', 'abc', 'Q'], "--since needs a Slack ts, got 'abc'"]] as const) {
+    const e = await run(s.url, [...args]);
+    assert.equal(e.code, 1); assert.equal(e.err, `ask-slack: ${msg}\n`);
+  }
+  s.close();
 });
